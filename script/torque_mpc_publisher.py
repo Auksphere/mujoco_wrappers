@@ -13,9 +13,18 @@ from trajectory_msgs.msg import JointTrajectory
 
 class ChinMujocoNode(Node):
     def __init__(self):
-        super().__init__('chin_mujoco_node')
+        super().__init__('mujoco_ros2_node')
+        self.rbt = input("Enter the robot name: (chin/jaka)")
+        if self.rbt == 'chin':
+            self.n = 6
+            self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/chin_crb7.xml'
+        elif self.rbt == 'jaka':
+            self.n = 6
+            self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/jaka_zu12.xml'
+        else:
+            raise ValueError("Invalid robot name. Please enter 'chin' or 'jaka'.")
+            
         self.paused = False
-
         self.PublishJointStates = self.create_publisher(JointState,'/current_states',10)
         self.PublishMujocoSimClock = self.create_publisher(Clock,'/clock',10)
         self.k_p = [400, 400, 400, 100, 25, 25]  # 比例增益
@@ -26,10 +35,9 @@ class ChinMujocoNode(Node):
         self.current_trajectory_index = 0
         self.counter = 0
         self.target_reached = False
-        self.desired_position = [0.0] * 6
-        self.desired_velocity = [0.0] * 6
-        self.feedforward_torque = [0.0] * 6
-        self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/chin_crb7.xml'
+        self.desired_position = [0.0] * self.n
+        self.desired_velocity = [0.0] * self.n
+        self.feedforward_torque = [0.0] * self.n
 
     def trajectory_callback(self, msg):
         self.trajectory = msg
@@ -63,14 +71,14 @@ class ChinMujocoNode(Node):
                 # 读取mujoco的关节信息，并上传至topic：/joint_states
                 joint_state_msg = JointState()
                 joint_state_msg.header.stamp = self.get_clock().now().to_msg()
-                joint_state_msg.position = [data.qpos[i] for i in range(6)]
-                joint_state_msg.velocity = [data.qvel[i] for i in range(6)]
-                joint_state_msg.effort = [data.qfrc_actuator[i] for i in range(6)]
+                joint_state_msg.position = [data.qpos[i] for i in range(self.n)]
+                joint_state_msg.velocity = [data.qvel[i] for i in range(self.n)]
+                joint_state_msg.effort = [data.qfrc_actuator[i] for i in range(self.n)]
                 self.PublishJointStates.publish(joint_state_msg)
 
                 # 判断是否到达期望状态
-                position_error = [self.desired_position[i] - joint_state_msg.position[i] for i in range(6)]
-                velocity_error = [self.desired_velocity[i] - joint_state_msg.velocity[i] for i in range(6)]
+                position_error = [self.desired_position[i] - joint_state_msg.position[i] for i in range(self.n)]
+                velocity_error = [self.desired_velocity[i] - joint_state_msg.velocity[i] for i in range(self.n)]
 
                 if np.linalg.norm(position_error) < 1e-3 and np.linalg.norm(velocity_error) < 1e-3:
                     self.target_reached = True
@@ -78,16 +86,16 @@ class ChinMujocoNode(Node):
                 if self.target_reached:
                     data.ctrl[:] = [
                         self.k_p[i] * position_error[i] + self.k_d[i] * velocity_error[i] + self.feedforward_torque[i]
-                        for i in range(6)
+                        for i in range(self.n)
                     ]
                 else:
                     if self.current_trajectory_index < len(self.trajectory.points):
                         target = self.trajectory.points[self.current_trajectory_index]
-                        position_error = [target.positions[i] - joint_state_msg.position[i] for i in range(6)]
-                        velocity_error = [target.velocities[i] - joint_state_msg.velocity[i] for i in range(6)]
+                        position_error = [target.positions[i] - joint_state_msg.position[i] for i in range(self.n)]
+                        velocity_error = [target.velocities[i] - joint_state_msg.velocity[i] for i in range(self.n)]
                         data.ctrl[:] = [
                             self.k_p[i] * position_error[i] + self.k_d[i] * velocity_error[i] + target.effort[i]
-                            for i in range(6)
+                            for i in range(self.n)
                         ]
                         self.counter += 1
                         if self.counter >= 10:

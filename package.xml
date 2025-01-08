@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>mujoco_publisher</name>
-  <version>0.0.1</version>
+  <version>1.0.0</version>
   <description>mujoco ros2 publisher</description>
   <maintainer email="Chen.WH@sjtu.edu.cn">ChenWH</maintainer>
   <license>MIT</license>

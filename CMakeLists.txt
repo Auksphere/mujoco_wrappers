@@ -6,8 +6,8 @@ find_package(ament_cmake REQUIRED)
 
 # 安装 Python 脚本
 install(PROGRAMS
-  script/mujoco_publisher.py
-  script/mujoco_controller.py
+  script/torque_mpc_publisher.py
+  script/torque_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

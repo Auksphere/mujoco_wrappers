@@ -14,7 +14,7 @@ joint_name = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 
 class ChinMujocoNode(Node):
     def __init__(self):
-        super().__init__('chin_mujoco_node')
+        super().__init__('mujoco_ros2_node')
         self.paused = False
 
         self.PublishJointStates = self.create_publisher(JointState,'/joint_states',10)
