@@ -7,8 +7,9 @@ import time
 from sensor_msgs.msg import JointState
 from rosgraph_msgs.msg import Clock
 import numpy as np
+from trajectory_msgs.msg import JointTrajectory
 
-# 输入前馈力矩和期望位置，速度，计算输出力矩
+# 输入一条轨迹，利用前馈力矩+PD控制器跟踪轨迹
 
 class ChinMujocoNode(Node):
     def __init__(self):
@@ -24,20 +25,40 @@ class ChinMujocoNode(Node):
             self.n = 6
             self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/jaka_zu12.xml'
             self.desired_position = [0.0, np.pi/2, 0, np.pi/2, 0, 0]
-            self.k_p = [256, 400, 225, 50, 20, 3]  # 比例增益
+            self.k_p = [256, 400, 225, 50, 20, 5]  # 比例增益
             self.k_d = [51, 80, 44, 10, 4, 1]  # 微分增益
-            self.k_d = [0.0] * 6  # 微分增益
         else:
             raise ValueError("Invalid robot name. Please enter 'chin' or 'jaka'.")
-        
+            
         self.paused = False
-        self.PublishJointStates = self.create_publisher(JointState,'/joint_states',10)
+        self.PublishJointStates = self.create_publisher(JointState,'/current_states',10)
         self.PublishMujocoSimClock = self.create_publisher(Clock,'/clock',10)
-        self.create_subscription(JointState, '/joint_commands', self.joint_commands_callback, 10)
+        self.create_subscription(JointTrajectory, '/joint_trajectory', self.trajectory_callback, 10)
+        self.create_subscription(JointState, '/desired_states', self.target_callback, 10)
+        self.trajectory = []
+        self.current_trajectory_index = 0
+        self.counter = 0
+        self.target_reached = False
         self.desired_velocity = [0.0] * self.n
         self.feedforward_torque = [0.0] * self.n
 
-    def joint_commands_callback(self, msg):
+    def trajectory_callback(self, msg):
+        self.trajectory = msg
+        self.current_trajectory_index = 0
+        self.target_reached = False
+        self.counter = 0
+
+        # Find the closest point in the trajectory based on the current time
+        current_time = self.get_clock().now().to_msg().sec + self.get_clock().now().to_msg().nanosec * 1e-9
+        for i in range(len(self.trajectory.points)):
+            point = self.trajectory.points[i]
+            point_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9 + point.time_from_start.sec + point.time_from_start.nanosec * 1e-9
+            time_diff = abs(current_time - point_time)
+            if time_diff <= 0.005:
+                self.current_trajectory_index = i
+                break
+
+    def target_callback(self, msg):
         self.desired_position = msg.position
         self.desired_velocity = msg.velocity
         self.feedforward_torque = msg.effort
@@ -49,30 +70,38 @@ class ChinMujocoNode(Node):
         # 设定模型关节角的初始值
         for i in range(self.n):
             data.joint(i).qpos[0] = self.desired_position[i]
-        data.joint(5).qpos[0] += 0.3
-        loop_count = 0
 
         with mujoco.viewer.launch_passive(model, data, key_callback=self.key_callback) as viewer:
             while 1:
                 step_start = time.time()
 
-                #读取mujoco的关节信息，并上传至topic：/joint_states
+                # 读取mujoco的关节信息，并上传至topic：/joint_states
                 joint_state_msg = JointState()
-                joint_state_msg.position = [data.joint(i).qpos[0] for i in range(self.n)]
-                joint_state_msg.velocity = [data.joint(i).qvel[0] for i in range(self.n)]
-                joint_state_msg.effort = [data.joint(i).qfrc_smooth[0] for i in range(self.n)]
-
+                joint_state_msg.header.stamp = self.get_clock().now().to_msg()
+                joint_state_msg.position = [data.qpos[i] for i in range(self.n)]
+                joint_state_msg.velocity = [data.qvel[i] for i in range(self.n)]
+                joint_state_msg.effort = [data.qfrc_actuator[i] for i in range(self.n)]
                 self.PublishJointStates.publish(joint_state_msg)
 
+                # 判断是否到达期望状态
                 position_error = [self.desired_position[i] - joint_state_msg.position[i] for i in range(self.n)]
                 velocity_error = [self.desired_velocity[i] - joint_state_msg.velocity[i] for i in range(self.n)]
-                loop_count += 1
-                if loop_count % 50 == 0:
-                    print(position_error)
-                data.ctrl[:] = [
-                    self.k_p[i] * position_error[i] + self.k_d[i] * velocity_error[i] + self.feedforward_torque[i]
-                    for i in range(self.n)
-                ]
+
+                if np.linalg.norm(position_error) < 1e-3 and np.linalg.norm(velocity_error) < 1e-3:
+                    self.target_reached = True
+
+                if self.target_reached:
+                    data.joint(i).qpos[0] = self.desired_position[i]
+                else:
+                    if self.current_trajectory_index < len(self.trajectory.points):
+                        target = self.trajectory.points[self.current_trajectory_index]
+                        data.joint(i).qpos[0] = target.positions[i]
+                        self.counter += 1
+                        if self.counter >= 10:
+                            self.current_trajectory_index += 1
+                            self.counter -= 10
+                    else:
+                        raise RuntimeError("Trajectory not received")
 
                 if not self.paused:
                     mujoco.mj_step(model, data)

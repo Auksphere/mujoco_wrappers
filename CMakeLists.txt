@@ -8,6 +8,8 @@ find_package(ament_cmake REQUIRED)
 install(PROGRAMS
   script/torque_mpc_publisher.py
   script/torque_publisher.py
+  script/position_mpc_publisher.py
+  script/position_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

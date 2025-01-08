@@ -18,24 +18,27 @@ class ChinMujocoNode(Node):
         if self.rbt == 'chin':
             self.n = 6
             self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/chin_crb7.xml'
+            self.desired_position = [0.0] * self.n
+            self.k_p = [400, 400, 400, 100, 25, 25]  # 比例增益
+            self.k_d = 2*np.sqrt(self.k_p)  # 微分增益
         elif self.rbt == 'jaka':
             self.n = 6
             self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/jaka_zu12.xml'
+            self.desired_position = [0.0, np.pi/2, 0, np.pi/2, 0, 0]
+            self.k_p = [256, 400, 225, 50, 20, 5]  # 比例增益
+            self.k_d = [51, 80, 44, 10, 4, 1]  # 微分增益
         else:
             raise ValueError("Invalid robot name. Please enter 'chin' or 'jaka'.")
             
         self.paused = False
         self.PublishJointStates = self.create_publisher(JointState,'/current_states',10)
         self.PublishMujocoSimClock = self.create_publisher(Clock,'/clock',10)
-        self.k_p = [400, 400, 400, 100, 25, 25]  # 比例增益
-        self.k_d = 2*np.sqrt(self.k_p)  # 微分增益
         self.create_subscription(JointTrajectory, '/joint_trajectory', self.trajectory_callback, 10)
         self.create_subscription(JointState, '/desired_states', self.target_callback, 10)
         self.trajectory = []
         self.current_trajectory_index = 0
         self.counter = 0
         self.target_reached = False
-        self.desired_position = [0.0] * self.n
         self.desired_velocity = [0.0] * self.n
         self.feedforward_torque = [0.0] * self.n
 
@@ -63,6 +66,10 @@ class ChinMujocoNode(Node):
     def ChinMujocoSim(self):
         model = mujoco.MjModel.from_xml_path(self.xml_file)
         data = mujoco.MjData(model)
+
+        # 设定模型关节角的初始值
+        for i in range(self.n):
+            data.joint(i).qpos[0] = self.desired_position[i]
 
         with mujoco.viewer.launch_passive(model, data, key_callback=self.key_callback) as viewer:
             while 1:
