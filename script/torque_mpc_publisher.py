@@ -87,7 +87,7 @@ class ChinMujocoNode(Node):
                 position_error = [self.desired_position[i] - joint_state_msg.position[i] for i in range(self.n)]
                 velocity_error = [self.desired_velocity[i] - joint_state_msg.velocity[i] for i in range(self.n)]
 
-                if np.linalg.norm(position_error) < 1e-3 and np.linalg.norm(velocity_error) < 1e-3:
+                if np.linalg.norm(position_error) < 1e-2 and np.linalg.norm(velocity_error) < 1e-2:
                     self.target_reached = True
 
                 if self.target_reached:

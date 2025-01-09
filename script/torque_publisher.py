@@ -47,10 +47,10 @@ class ChinMujocoNode(Node):
         data = mujoco.MjData(model)
 
         # 设定模型关节角的初始值
-        for i in range(self.n):
-            data.joint(i).qpos[0] = self.desired_position[i]
-        data.joint(5).qpos[0] += 0.3
-        loop_count = 0
+        #for i in range(self.n):
+        #    data.joint(i).qpos[0] = self.desired_position[i]
+        #data.joint(5).qpos[0] += 0.3
+        #loop_count = 0
 
         with mujoco.viewer.launch_passive(model, data, key_callback=self.key_callback) as viewer:
             while 1:
@@ -66,9 +66,9 @@ class ChinMujocoNode(Node):
 
                 position_error = [self.desired_position[i] - joint_state_msg.position[i] for i in range(self.n)]
                 velocity_error = [self.desired_velocity[i] - joint_state_msg.velocity[i] for i in range(self.n)]
-                loop_count += 1
-                if loop_count % 50 == 0:
-                    print(position_error)
+                #loop_count += 1
+                #if loop_count % 50 == 0:
+                #    print(position_error)
                 data.ctrl[:] = [
                     self.k_p[i] * position_error[i] + self.k_d[i] * velocity_error[i] + self.feedforward_torque[i]
                     for i in range(self.n)
