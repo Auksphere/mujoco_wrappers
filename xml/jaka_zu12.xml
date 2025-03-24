@@ -4,6 +4,12 @@
   <option timestep="0.001"/>
   <option gravity="0 0 -9.81"/>
 
+  <default>
+    <default class="jaka">
+      <geom friction="0.000001" margin="0.000001" condim="6"/>
+    </default>
+  </default>
+
   <asset>
     <mesh name="link0" file="base_link.STL"/>
     <mesh name="link1" file="1.STL"/>
@@ -24,6 +30,7 @@
     
     <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" mesh="link0" />
     <geom type="mesh" rgba="1 1 1 1" mesh="link0"/>
+    
     <body name="Link_1" pos="0 0 0.10265">
       <inertial pos="-0.000328432 0.0040609 -0.0250109" quat="0.494863 -0.0216305 0.0243938 0.868359" mass="3.78" diaginertia="0.0405059 0.0403714 0.0342898"/>
       <joint name="joint1" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28"/>
@@ -57,12 +64,12 @@
   </worldbody>
 
   <actuator>
-    <general name="joint1" joint="joint1" ctrlrange="-2000 2000"/>
-    <general name="joint2" joint="joint2" ctrlrange="-8000 8000"/>
-    <general name="joint3" joint="joint3" ctrlrange="-8000 8000"/>
-    <general name="joint4" joint="joint4" ctrlrange="-2000 2000"/>
-    <general name="joint5" joint="joint5" ctrlrange="-3000 3000"/>
-    <general name="joint6" joint="joint6" ctrlrange="-1000 1000"/>
+    <general name="joint1" joint="joint1" ctrlrange="-160 160"/>
+    <general name="joint2" joint="joint2" ctrlrange="-160 160"/>
+    <general name="joint3" joint="joint3" ctrlrange="-100 100"/>
+    <general name="joint4" joint="joint4" ctrlrange="-30 30"/>
+    <general name="joint5" joint="joint5" ctrlrange="-30 30"/>
+    <general name="joint6" joint="joint6" ctrlrange="-10 10"/>
   </actuator>
 
 </mujoco>
