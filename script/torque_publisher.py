@@ -24,9 +24,8 @@ class ChinMujocoNode(Node):
             self.n = 6
             self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/jaka_zu12.xml'
             self.desired_position = [0.0, np.pi/2, 0, np.pi/2, 0, 0]
-            self.k_p = [256, 400, 225, 50, 20, 3]  # 比例增益
-            self.k_d = [51, 80, 44, 10, 4, 1]  # 微分增益
-            self.k_d = [0.0] * 6  # 微分增益
+            self.k_p = [400, 400, 200, 40, 40, 5]  # 比例增益
+            self.k_d = [5, 5, 3, 3, 1, 1]  # 微分增益
         else:
             raise ValueError("Invalid robot name. Please enter 'chin' or 'jaka'.")
         

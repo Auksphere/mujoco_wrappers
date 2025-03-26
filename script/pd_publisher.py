@@ -7,6 +7,7 @@ import time
 from sensor_msgs.msg import JointState
 from rosgraph_msgs.msg import Clock
 import numpy as np
+import csv
 
 # 输入前馈力矩和期望位置，速度，计算输出力矩
 
@@ -23,24 +24,19 @@ class ChinMujocoNode(Node):
         elif self.rbt == 'jaka':
             self.n = 6
             self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/jaka_zu12.xml'
-            self.desired_position = [0.0, np.pi/2, 0, np.pi/2, 0, 0]
-            self.k_p = [256, 400, 225, 50, 20, 3]  # 比例增益
-            self.k_d = [51, 80, 44, 10, 4, 1]  # 微分增益
-            self.k_d = [0.0] * 6  # 微分增益
+            self.desired_position = [0, np.pi/2, 0, np.pi/2, 0, 0]
+            self.k_p = [400, 400, 400, 50, 25, 5]  # 比例增益
+            self.k_d = [5, 5, 5, 3, 2, 1]  # 微分增益
         else:
             raise ValueError("Invalid robot name. Please enter 'chin' or 'jaka'.")
         
         self.paused = False
-        self.PublishJointStates = self.create_publisher(JointState,'/joint_states',10)
         self.PublishMujocoSimClock = self.create_publisher(Clock,'/clock',10)
-        self.create_subscription(JointState, '/joint_commands', self.joint_commands_callback, 10)
         self.desired_velocity = [0.0] * self.n
         self.feedforward_torque = [0.0] * self.n
-
-    def joint_commands_callback(self, msg):
-        self.desired_position = msg.position
-        self.desired_velocity = msg.velocity
-        self.feedforward_torque = msg.effort
+        self.csv_file = open('/home/chenwh/ga_ddp/src/mujoco_publisher/log/joint_angles.csv', mode='w', newline='')
+        self.csv_writer = csv.writer(self.csv_file)
+        self.csv_writer.writerow(['time', 'desired_position', 'actual_position'])
 
     def ChinMujocoSim(self):
         model = mujoco.MjModel.from_xml_path(self.xml_file)
@@ -48,23 +44,29 @@ class ChinMujocoNode(Node):
 
         # 设定模型关节角的初始值
         for i in range(self.n):
-            data.joint(i).qpos[0] = self.desired_position[i]
-        data.joint(5).qpos[0] += 0.3
-
+            data.qpos[i] = self.desired_position[i]
+        
+        start_time = time.time()
         with mujoco.viewer.launch_passive(model, data, key_callback=self.key_callback) as viewer:
             while 1:
                 step_start = time.time()
 
-                #读取mujoco的关节信息，并上传至topic：/joint_states
+                #读取mujoco的关节信息
                 joint_state_msg = JointState()
-                joint_state_msg.position = [data.joint(i).qpos[0] for i in range(self.n)]
-                joint_state_msg.velocity = [data.joint(i).qvel[0] for i in range(self.n)]
-                joint_state_msg.effort = [data.joint(i).qfrc_smooth[0] for i in range(self.n)]
+                joint_state_msg.position = [data.qpos[i] for i in range(self.n)]
+                joint_state_msg.velocity = [data.qvel[i] for i in range(self.n)]
+                joint_state_msg.effort = [data.qfrc_smooth[i] for i in range(self.n)]
+                
+                #self.desired_position[0] = np.sin((time.time() - start_time)/6)
+                position_error = [np.sin((time.time() - start_time)/6) + self.desired_position[i] - joint_state_msg.position[i] for i in range(self.n)]
+                print(np.linalg.norm(position_error))
+                velocity_error = [self.desired_velocity[i] - joint_state_msg.velocity[i] for i in range(self.n)]
+                data.ctrl[:] = [
+                    self.k_p[i] * position_error[i] + self.k_d[i] * velocity_error[i] + self.feedforward_torque[i]
+                    for i in range(self.n)
+                ]
 
-                self.PublishJointStates.publish(joint_state_msg)
-
-                for i in range(self.n):
-                    data.joint(i).qpos[0] = self.desired_position[i]
+                self.csv_writer.writerow([step_start, self.desired_position, joint_state_msg.position])
 
                 if not self.paused:
                     mujoco.mj_step(model, data)
@@ -92,6 +94,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        chin_mujoco_node.csv_file.close()
         chin_mujoco_node.destroy_node()
         rclpy.shutdown()
 

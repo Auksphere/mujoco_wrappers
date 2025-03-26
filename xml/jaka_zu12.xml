@@ -31,7 +31,7 @@
     <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" mesh="link0" />
     <geom type="mesh" rgba="1 1 1 1" mesh="link0"/>
     
-    <body name="Link_1" pos="0 0 0.10265">
+    <body name="Link_1" pos="0 0 0.20265">
       <inertial pos="-0.000328432 0.0040609 -0.0250109" quat="0.494863 -0.0216305 0.0243938 0.868359" mass="3.78" diaginertia="0.0405059 0.0403714 0.0342898"/>
       <joint name="joint1" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28"/>
       <geom type="mesh" rgba="1 1 1 1" mesh="link1"/>
