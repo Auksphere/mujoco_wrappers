@@ -1,5 +1,5 @@
 <mujoco model="panda_mujoco">
-  <compiler angle="radian" meshdir="../assets/franka_panda/collision" />
+  <compiler angle="radian" meshdir="collision" />
 
   <option timestep="0.001"/>
     <option gravity="0 0 -9.81"/>

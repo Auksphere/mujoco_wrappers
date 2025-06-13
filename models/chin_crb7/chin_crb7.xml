@@ -1,5 +1,5 @@
 <mujoco model="chin_mujoco">
-    <compiler angle="radian" meshdir="../assets/chin_crb7" />
+    <compiler angle="radian" meshdir="meshes" />
 
     <option timestep="0.001"/>
     <option gravity="0 0 -9.81"/>

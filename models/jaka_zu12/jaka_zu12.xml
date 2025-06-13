@@ -1,5 +1,5 @@
 <mujoco model="jaka_zu12">
-  <compiler angle="radian" meshdir="../assets/jaka_zu12"/>
+  <compiler angle="radian" meshdir="meshes"/>
 
   <option timestep="0.001"/>
   <option gravity="0 0 -9.81"/>
