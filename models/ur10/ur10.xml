@@ -1,5 +1,5 @@
 <mujoco model="ur10_robot">
-  <compiler angle="radian"/>
+  <compiler angle="radian" meshdir="collision"/>
 
   <asset>
     <mesh name="base" file="base.stl"/>

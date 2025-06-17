@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>mujoco_publisher</name>
+  <name>mujoco_wrappers</name>
   <version>1.0.0</version>
-  <description>mujoco ros2 publisher</description>
+  <description>mujoco ros2 and gymnasium wrappers</description>
   <maintainer email="Chen.WH@sjtu.edu.cn">ChenWH</maintainer>
   <license>MIT</license>
 

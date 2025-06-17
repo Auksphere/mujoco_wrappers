@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 3.10)
-project(mujoco_publisher)
+project(mujoco_wrappers)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
 
-# 安装 Python 脚本
+# Install targets
 install(PROGRAMS
-  script/torque_mpc_publisher.py
-  script/torque_publisher.py
-  script/pd_publisher.py
+  controllers/torque_mpc_publisher.py
+  controllers/torque_publisher.py
+  controllers/pd_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
