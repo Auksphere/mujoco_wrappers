@@ -5,7 +5,7 @@ mujoco wrappers
 ## To Do
 
 - [ ] gymnasium envs setup
-- [ ] 
+- [ ] azure kinect DK stl file update
 
 ## Folder Structure
 

@@ -1,16 +1,18 @@
-<mujoco model="ur10">
+<mujoco model="ur10_kinect">
   <compiler angle="radian" autolimits="true"/>
 
   <option integrator="implicitfast"/>
 
   <asset>
-    <mesh name="base" file="base.stl"/>
-    <mesh name="shoulder" file="shoulder.stl"/>
-    <mesh name="upperarm" file="upperarm.stl"/>
-    <mesh name="forearm" file="forearm.stl"/>
-    <mesh name="wrist1" file="wrist1.stl"/>
-    <mesh name="wrist2" file="wrist2.stl"/>
-    <mesh name="wrist3" file="wrist3.stl"/>
+    <mesh name="base" file="../ur10/collision/base.stl"/>
+    <mesh name="shoulder" file="../ur10/collision/shoulder.stl"/>
+    <mesh name="upperarm" file="../ur10/collision/upperarm.stl"/>
+    <mesh name="forearm" file="../ur10/collision/forearm.stl"/>
+    <mesh name="wrist1" file="../ur10/collision/wrist1.stl"/>
+    <mesh name="wrist2" file="../ur10/collision/wrist2.stl"/>
+    <mesh name="wrist3" file="../ur10/collision/wrist3.stl"/>
+    <mesh name="mount_Link" file="meshes/mount_v2.STL"/>
+    <mesh name="camera_Link" file="meshes/Azure Kinect DK.STL"/>
   </asset>
 
   <worldbody>
@@ -39,6 +41,8 @@
                 <inertial pos="0 0 -0.026" quat="0.707107 0 0 0.707107" mass="0.365" diaginertia="0.00041 0.0004 0.00034"/>
                 <joint name="joint6" pos="0 0 0" axis="0 0 1" range="-6.28319 6.28319"/>
                 <geom pos="0 0 -0.0922" quat="0.707107 0.707107 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="wrist3"/>
+                <geom pos="0 0 0" quat="1 0 0 0" type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="mount_Link"/>
+                <geom pos="0 0 0" quat="1 0 0 0" type="mesh" rgba="0.941176 0.941176 0.941176 1" mesh="camera_Link"/>
               </body>
             </body>
           </body>
