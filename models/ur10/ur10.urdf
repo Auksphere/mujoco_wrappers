@@ -119,7 +119,7 @@
     <visual>
       <origin rpy="0 0 3.141592653589793" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="package://models/ur10/visual/base.dae"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/base.dae"/>
       </geometry>
       <material name="LightGrey">
         <color rgba="0.7 0.7 0.7 1.0"/>
@@ -128,7 +128,7 @@
     <collision>
       <origin rpy="0 0 3.141592653589793" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="package://models/ur10/collision/base.stl"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/base.stl"/>
       </geometry>
     </collision>
     <inertial>
@@ -141,7 +141,7 @@
     <visual>
       <origin rpy="0 0 3.141592653589793" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="package://models/ur10/visual/shoulder.dae"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/shoulder.dae"/>
       </geometry>
       <material name="LightGrey">
         <color rgba="0.7 0.7 0.7 1.0"/>
@@ -150,7 +150,7 @@
     <collision>
       <origin rpy="0 0 3.141592653589793" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="package://models/ur10/collision/shoulder.stl"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/shoulder.stl"/>
       </geometry>
     </collision>
     <inertial>
@@ -163,7 +163,7 @@
     <visual>
       <origin rpy="1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0.220941"/>
       <geometry>
-        <mesh filename="package://models/ur10/visual/upperarm.dae"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/upperarm.dae"/>
       </geometry>
       <material name="LightGrey">
         <color rgba="0.7 0.7 0.7 1.0"/>
@@ -172,7 +172,7 @@
     <collision>
       <origin rpy="1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0.220941"/>
       <geometry>
-        <mesh filename="package://models/ur10/collision/upperarm.stl"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/upperarm.stl"/>
       </geometry>
     </collision>
     <inertial>
@@ -185,7 +185,7 @@
     <visual>
       <origin rpy="1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0.049042"/>
       <geometry>
-        <mesh filename="package://models/ur10/visual/forearm.dae"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/forearm.dae"/>
       </geometry>
       <material name="LightGrey">
         <color rgba="0.7 0.7 0.7 1.0"/>
@@ -194,7 +194,7 @@
     <collision>
       <origin rpy="1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0.049042"/>
       <geometry>
-        <mesh filename="package://models/ur10/collision/forearm.stl"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/forearm.stl"/>
       </geometry>
     </collision>
     <inertial>
@@ -208,7 +208,7 @@
       <!-- TODO: Move this to a parameter -->
       <origin rpy="1.5707963267948966 0 0" xyz="0 0 -0.1149"/>
       <geometry>
-        <mesh filename="package://models/ur10/visual/wrist1.dae"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/wrist1.dae"/>
       </geometry>
       <material name="LightGrey">
         <color rgba="0.7 0.7 0.7 1.0"/>
@@ -217,7 +217,7 @@
     <collision>
       <origin rpy="1.5707963267948966 0 0" xyz="0 0 -0.1149"/>
       <geometry>
-        <mesh filename="package://models/ur10/collision/wrist1.stl"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/wrist1.stl"/>
       </geometry>
     </collision>
     <inertial>
@@ -230,7 +230,7 @@
     <visual>
       <origin rpy="0 0 0" xyz="0 0 -0.1158"/>
       <geometry>
-        <mesh filename="package://models/ur10/visual/wrist2.dae"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/wrist2.dae"/>
       </geometry>
       <material name="LightGrey">
         <color rgba="0.7 0.7 0.7 1.0"/>
@@ -239,7 +239,7 @@
     <collision>
       <origin rpy="0 0 0" xyz="0 0 -0.1158"/>
       <geometry>
-        <mesh filename="package://models/ur10/collision/wrist2.stl"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/wrist2.stl"/>
       </geometry>
     </collision>
     <inertial>
@@ -252,7 +252,7 @@
     <visual>
       <origin rpy="1.5707963267948966 0 0" xyz="0 0 -0.0922"/>
       <geometry>
-        <mesh filename="package://models/ur10/visual/wrist3.dae"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/wrist3.dae"/>
       </geometry>
       <material name="LightGrey">
         <color rgba="0.7 0.7 0.7 1.0"/>
@@ -261,7 +261,7 @@
     <collision>
       <origin rpy="1.5707963267948966 0 0" xyz="0 0 -0.0922"/>
       <geometry>
-        <mesh filename="package://models/ur10/collision/wrist3.stl"/>
+        <mesh filename="package://mujoco_wrappers/models/ur10/assets/wrist3.stl"/>
       </geometry>
     </collision>
     <inertial>

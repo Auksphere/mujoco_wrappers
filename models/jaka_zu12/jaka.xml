@@ -1,0 +1,68 @@
+<mujoco model="jaka">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+
+  <default>
+    <default class="jaka">
+      <joint axis="0 1 0" range="-6.28319 6.28319" armature="0.1"/>
+      <position ctrlrange="-6.2831 6.2831"/>
+      <general biastype="affine" ctrlrange="-6.2831 6.2831" gainprm="5000" biasprm="0 -5000 -500"/>
+    </default>
+  </default>
+
+  <asset>
+    <mesh name="link0" file="base_link.STL"/>
+    <mesh name="link1" file="1.STL"/>
+    <mesh name="link2" file="2.STL"/>
+    <mesh name="link3" file="3.STL"/>
+    <mesh name="link4" file="4.STL"/>
+    <mesh name="link5" file="5.STL"/>
+    <mesh name="link6" file="6.STL"/>
+  </asset>
+
+  <worldbody>
+    <body name="link0" pos="0 0 0.05" childclass="jaka">
+      <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" mesh="link0" />
+      <geom type="mesh" rgba="1 1 1 1" mesh="link0"/>
+      <body name="Link_1" pos="0 0 0.10765">
+        <inertial pos="-0.000328432 0.0040609 -0.0250109" quat="0.494863 -0.0216305 0.0243938 0.868359" mass="3.78" diaginertia="0.0405059 0.0403714 0.0342898"/>
+        <joint name="joint1" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="link1"/>
+        <body name="Link_2" quat="0.707105 0.707108 0 0">
+          <inertial pos="0.2975 -1.25165e-08 -0.16607" quat="0.499974 0.499521 0.500477 0.500027" mass="12.44" diaginertia="1.66881 1.65303 0.116455"/>
+          <joint name="joint2" pos="0 0 0" axis="0 0 1" limited="true" range="-1.48 4.62"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="link2"/>
+          <body name="Link_3" pos="0.595 0 0">
+            <inertial pos="0.294234 -4.72319e-06 -0.0241861" quat="-0.00022526 0.704551 -0.000206596 0.709653" mass="5.06" diaginertia="0.498538 0.497634 0.021265"/>
+            <joint name="joint3" pos="0 0 0" axis="0 0 1" limited="true" range="-3.05 3.05"/>
+            <geom type="mesh" rgba="1 1 1 1" mesh="link3"/>
+            <body name="Link_4" pos="0.5715 0 -0.1315">
+              <inertial pos="4.22018e-06 -0.0150344 0.00216594" quat="0.677782 0.701328 0.159558 -0.152616" mass="0.883" diaginertia="0.00459197 0.0045525 0.00363768"/>
+              <joint name="joint4" pos="0 0 0" axis="0 0 1" limited="true" range="-1.48 4.62"/>
+              <geom type="mesh" rgba="1 1 1 1" mesh="link4"/>
+              <body name="Link_5" pos="0 -0.115 0" quat="0.707105 0.707108 0 0">
+                <inertial pos="3.86595e-06 0.0042653 -0.00184283" quat="0.695151 0.688192 -0.146515 0.147274" mass="1" diaginertia="0.0070303 0.00698932 0.00413442"/>
+                <joint name="joint5" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28"/>
+                <geom type="mesh" rgba="1 1 1 1" mesh="link5"/>
+                <body name="Link_6" pos="0 0.1035 0" quat="0.707105 -0.707108 0 0">
+                  <inertial pos="-0.000786085 3.88801e-05 -0.0163247" quat="-0.134296 0.689453 0.135461 0.698763" mass="0.22" diaginertia="0.00106472 0.000657738 0.000588131"/>
+                  <joint name="joint6" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28"/>
+                  <geom type="mesh" rgba="1 1 1 1" mesh="link6"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <general class="jaka" name="actuator1" joint="joint1" gainprm="4500" biasprm="0 -4500 -450" forcerange="-330 330" ctrlrange="-6.28 6.28"/>
+    <general class="jaka" name="actuator2" joint="joint2" gainprm="4500" biasprm="0 -4500 -450" forcerange="-330 330" ctrlrange="-1.48 4.62"/>
+    <general class="jaka" name="actuator3" joint="joint3" gainprm="3500" biasprm="0 -3500 -350" forcerange="-150 150" ctrlrange="-3.05 3.05"/>
+    <general class="jaka" name="actuator4" joint="joint4" gainprm="3500" biasprm="0 -3500 -350" forcerange="-56 56" ctrlrange="-1.48 4.62"/>
+    <general class="jaka" name="actuator5" joint="joint5" gainprm="2000" biasprm="0 -2000 -200" forcerange="-56 56" ctrlrange="-6.28 6.28"/>
+    <general class="jaka" name="actuator6" joint="joint6" gainprm="2000" biasprm="0 -2000 -200" forcerange="-56 56" ctrlrange="-6.28 6.28"/>
+  </actuator>
+
+</mujoco>

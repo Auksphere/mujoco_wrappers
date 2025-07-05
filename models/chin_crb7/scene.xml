@@ -1,5 +1,5 @@
-<mujoco model="panda scene">
-  <include file="panda.xml"/>
+<mujoco model="chin scene">
+  <include file="chin.xml"/>
 
   <statistic center="0.4 0 0.4" extent="1"/>
 
