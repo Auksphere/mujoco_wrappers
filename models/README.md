@@ -26,11 +26,11 @@
 
 ## Intel RealSense D435i
 
-- realsense_d435i: This package contains a simplified robot description (MJCF) of the [Realsense D435i](https://www.intelrealsense.com/depth-camera-d435i/) camera developed by Intel. It is derived from the [publicly available](https://github.com/IntelRealSense/realsense-ros/blob/ros2-development/realsense2_description/urdf/_d435i.urdf.xacro) URDF description with modifications by [Binit Shah](https://www.linkedin.com/in/binit-shah) to include colors.
+- realsense_d435i: This package contains a simplified robot description (MJCF) of the [Realsense D435i](https://www.intelrealsense.com/depth-camera-d435i/) camera developed by Intel. It is derived from the [publicly available URDF description](https://github.com/IntelRealSense/realsense-ros/blob/ros2-development/realsense2_description/urdf/_d435i.urdf.xacro) with modifications by [Binit Shah](https://www.linkedin.com/in/binit-shah) to include colors.
 
 ## Azure Kinect DK
 
-- kinect_dk: This package contains a simplified robot description (MJCF) of the [Realsense D435i](https://www.intelrealsense.com/depth-camera-d435i/) camera developed by Intel. It is derived from the [publicly available](https://github.com/IntelRealSense/realsense-ros/blob/ros2-development/realsense2_description/urdf/_d435i.urdf.xacro) URDF description with modifications by [Binit Shah](https://www.linkedin.com/in/binit-shah) to include colors.
+- kinect_dk: This package contains a simplified robot description (MJCF) of the [Azure Kinect DK](https://azure.microsoft.com/zh-cn/products/kinect-dk) camera developed by Microsoft. It is derived from the [publicly available URDF description](https://github.com/microsoft/Azure_Kinect_ROS_Driver/blob/melodic/urdf/azure_kinect.urdf.xacro).
 
 ## URDF → MJCF derivation steps
 

@@ -1,0 +1,32 @@
+<mujoco model="kinect">
+  <compiler meshdir="assets" fitaabb="true"/>
+
+  <visual>
+    <global azimuth="90" elevation="-90"/>
+  </visual>
+
+  <default>
+    <default class="kinect">
+      <material specular="0" shininess="0.25"/>
+      <default class="visual">
+        <geom group="2" type="mesh" contype="0" conaffinity="0" mass="0"/>
+      </default>
+      <default class="collision">
+        <geom group="3" type="mesh" mass="0"/>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <mesh name="visual" file="visual.stl"/>
+    <mesh name="collision" file="collision.stl"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <body name="azure_base" childclass="kinect">
+      <geom mesh="visual" mass="0.44" class="visual"/>
+      <geom class="collision" type="capsule" mesh="collision"/>
+    </body>
+  </worldbody>
+</mujoco>
