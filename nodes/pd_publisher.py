@@ -17,13 +17,15 @@ class ChinMujocoNode(Node):
         self.rbt = input("Enter the robot name: (chin/jaka)")
         if self.rbt == 'chin':
             self.n = 6
-            self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/chin_crb7.xml'
+            # self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/chin_crb7.xml'
+            self.xml_file = 'models/chin_crb7/scene.xml'
             self.desired_position = [0.0] * self.n
             self.k_p = [400, 400, 400, 100, 25, 25]  # 比例增益
             self.k_d = 2*np.sqrt(self.k_p)  # 微分增益
         elif self.rbt == 'jaka':
             self.n = 6
-            self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/jaka_zu12.xml'
+            # self.xml_file = '/home/chenwh/ga_ddp/src/mujoco_publisher/xml/jaka_zu12.xml'
+            self.xml_file = 'models/jaka_zu12/scene.xml'
             self.desired_position = [0, np.pi/2, 0, np.pi/2, 0, 0]
             self.k_p = [400, 400, 400, 50, 25, 5]  # 比例增益
             self.k_d = [5, 5, 5, 3, 2, 1]  # 微分增益
@@ -34,7 +36,7 @@ class ChinMujocoNode(Node):
         self.PublishMujocoSimClock = self.create_publisher(Clock,'/clock',10)
         self.desired_velocity = [0.0] * self.n
         self.feedforward_torque = [0.0] * self.n
-        self.csv_file = open('/home/chenwh/ga_ddp/src/mujoco_publisher/log/joint_angles.csv', mode='w', newline='')
+        self.csv_file = open('log/joint_angles.csv', mode='w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow(['time', 'desired_position', 'actual_position'])
 
