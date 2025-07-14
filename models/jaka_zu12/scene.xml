@@ -2,9 +2,7 @@
   <include file="jaka.xml"/>
 
   <statistic center="0.4 0 0.4" extent="1"/>
-  <option timestep="0.002" gravity="0 0 -9.81" wind="0 0 0" integrator="implicitfast"
-        density="1.225"
-        viscosity="1.8e-5" />
+
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0 0 0"/>
     <rgba haze="0.15 0.25 0.35 1"/>
