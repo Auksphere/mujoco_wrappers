@@ -46,6 +46,7 @@
                   <inertial pos="0 0 -0.026" quat="0.707107 0 0 0.707107" mass="0.365" diaginertia="0.00041 0.0004 0.00034"/>
                   <joint name="joint6" pos="0 0 0" axis="0 0 1" range="-6.28319 6.28319" damping="2"/>
                   <geom pos="0 0 -0.0922" quat="0.707107 0.707107 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="wrist3"/>
+                  <body name="attachment" pos="0 0 0.01" quat="0.707107 0 0 -0.707107"></body>
                 </body>
               </body>
             </body>

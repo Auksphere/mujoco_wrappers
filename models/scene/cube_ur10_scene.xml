@@ -1,0 +1,44 @@
+<mujoco model="cube_ur10_scene">
+  <asset>
+    <!-- include basic cube textures/materials -->
+    <texture name="cube" type="cube"
+             fileup="../reorientation_cube/textures/fileup.png"
+             fileback="../reorientation_cube/textures/fileback.png"
+             filedown="../reorientation_cube/textures/filedown.png"
+             filefront="../reorientation_cube/textures/filefront.png"
+             fileleft="../reorientation_cube/textures/fileleft.png"
+             fileright="../reorientation_cube/textures/fileright.png"/>
+    <material name="cube" texture="cube"/>
+    <material name="red" rgba="1 0 0 1"/>
+    <material name="green" rgba="0 1 0 1"/>
+    <material name="blue" rgba="0 0 1 1"/>
+  </asset>
+
+  <!-- match IMU rate: 0.0025s -> 400Hz -->
+  <option timestep="0.0025" gravity="0 0 0"/>
+
+  <!-- include UR10 model (relative path) -->
+  <include file="../ur10/ur10_manip.xml"/>
+
+  <worldbody>
+    <!-- keep any world content from included UR10; add a cube with freejoint for orientation visualization -->
+    <body name="cube" pos="0.6 0.0 0.5" quat="1 0 0 0">
+      <freejoint/>
+      <geom name="cube" type="box" size=".03 .03 .03" mass=".122" material="cube"/>
+      <!-- visualization axes (rotate with cube) -->
+      <geom name="axis_x" type="box" size=".03 .002 .002" pos=".03 0 0" material="red"/>
+      <geom name="axis_y" type="box" size=".003 .03 .002" pos="0 .03 0" material="green"/>
+      <geom name="axis_z" type="box" size=".003 .002 .03" pos="0 0 .03" material="blue"/>
+    </body>
+  </worldbody>
+
+  <sensor>
+    <framepos name="cube_position" objtype="body" objname="cube"/>
+    <framequat name="cube_orientation" objtype="body" objname="cube"/>
+    <framelinvel name="cube_linear_velocity" objtype="body" objname="cube"/>
+    <frameangvel name="cube_angular_velocity" objtype="body" objname="cube"/>
+    <!-- also expose UR10 attachment site if available -->
+    <framepos name="ee_position" objtype="site" objname="attachment_site"/>
+    <framequat name="ee_orientation" objtype="body" objname="attachment"/>
+  </sensor>
+</mujoco>

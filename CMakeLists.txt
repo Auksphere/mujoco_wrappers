@@ -6,9 +6,9 @@ find_package(ament_cmake REQUIRED)
 
 # Install targets
 install(PROGRAMS
-  nodes/torque_mpc_publisher.py
-  nodes/torque_publisher.py
-  nodes/pd_publisher.py
+#  nodes/torque_mpc_publisher.py
+#  nodes/torque_publisher.py
+#  nodes/pd_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

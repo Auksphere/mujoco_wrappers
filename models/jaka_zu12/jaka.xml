@@ -47,6 +47,7 @@
                   <inertial pos="-0.000786085 3.88801e-05 -0.0163247" quat="-0.134296 0.689453 0.135461 0.698763" mass="0.22" diaginertia="0.00106472 0.000657738 0.000588131"/>
                   <joint name="joint6" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28"/>
                   <geom type="mesh" rgba="1 1 1 1" mesh="link6"/>
+                  <body name="attachment" pos="0 0 0.01" quat="0.707107 0 0 -0.707107"></body>
                 </body>
               </body>
             </body>

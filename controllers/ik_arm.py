@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 import time
 import qpsolvers as qp
 from functools import wraps
-from utils.util import calculate_arm_Te, angle_axis_python
+from .util import calculate_arm_Te, angle_axis_python
 
 # suppress warnings
 import warnings
@@ -146,7 +146,7 @@ class IK(ABC):
 
     def error(self, Te: np.ndarray, Tep: np.ndarray):
         """
-        Calculates the engle axis error between current end-effector pose Te and
+        Calculates the angle axis error between current end-effector pose Te and
         the desired end-effector pose Tep. Also calulates the quadratic error E
         which is weighted by the diagonal matrix We.
 
@@ -228,7 +228,7 @@ class QP(IK):
         # Do not use mj_kinematics, it does more than foward the position kinematics!
         # mujoco.mj_kinematics(model, data)
         mujoco.mj_fwdPosition(model, data)
-        Te = calculate_arm_Te(data.body("link6").xpos, data.body("link6").xquat)
+        Te = calculate_arm_Te(data.body("attachment").xpos, data.body("attachment").xquat)
         # print("Tep: ", Tep)
         # print("Te: ", Te)
         # exit(1)
@@ -242,7 +242,7 @@ class QP(IK):
         # Calculate the Jacobian
         jacp = np.zeros((3, model.nv))
         jacr = np.zeros((3, model.nv))
-        mujoco.mj_jacBodyCom(model, data, jacp, jacr, model.body("link6").id)
+        mujoco.mj_jacBodyCom(model, data, jacp, jacr, model.body("attachment").id)
         J = np.concatenate((jacp, jacr), axis=0)
         # print("J: \n", J)
         # Quadratic component of objective function
@@ -403,9 +403,9 @@ class LM_Chan(IK):
         # mujoco.mj_kinematics(model, data)
         mujoco.mj_fwdPosition(model, data)
         Te = np.eye(4)
-        Te[:3,3] = data.body("link6").xpos
+        Te[:3,3] = data.body("attachment").xpos
         res = np.zeros(9)
-        mujoco.mju_quat2Mat(res, data.body("link6").xquat)
+        mujoco.mju_quat2Mat(res, data.body("attachment").xquat)
         Te[:3,:3] = res.reshape((3,3))
         # print(Te)
 
@@ -414,7 +414,7 @@ class LM_Chan(IK):
         # Calculate the Jacobian
         jacp = np.zeros((3, model.nv))
         jacr = np.zeros((3, model.nv))
-        mujoco.mj_jacBodyCom(model, data, jacp, jacr, model.body("link6").id)
+        mujoco.mj_jacBodyCom(model, data, jacp, jacr, model.body("attachment").id)
         J = np.concatenate((jacp, jacr), axis=0)
         g = J.T @ self.We @ e
 

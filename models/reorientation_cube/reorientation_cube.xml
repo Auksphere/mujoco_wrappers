@@ -1,0 +1,49 @@
+<mujoco model="reorientation_cube">
+  <asset>
+    <texture name="cube" type="cube"
+             fileup="./textures/fileup.png"
+             fileback="./textures/fileback.png"
+             filedown="./textures/filedown.png"
+             filefront="./textures/filefront.png"
+             fileleft="./textures/fileleft.png"
+             fileright="./textures/fileright.png"/>
+    <material name="cube" texture="cube"/>
+    <texture name="graycube" type="cube"
+            fileup="./textures/grayup.png"
+             fileback="./textures/grayback.png"
+             filedown="./textures/graydown.png"
+             filefront="./textures/grayfront.png"
+             fileleft="./textures/grayleft.png"
+             fileright="./textures/grayright.png"/>
+    <material name="graycube" texture="graycube"/>
+    <!-- simple colored materials for axis visualization -->
+    <material name="red" rgba="1 0 0 1"/>
+    <material name="green" rgba="0 1 0 1"/>
+    <material name="blue" rgba="0 0 1 1"/>
+  </asset>
+  <option timestep="0.0025" gravity="0 0 0"/>
+
+  <worldbody>
+    <light pos="0 0 1"/>
+    <body name="cube" pos="0.0 0.0 0.5" quat="1 0 0 0">
+      <freejoint/>
+      <!-- main cube -->
+      <geom name="cube" type="box" size=".03 .03 .03" mass=".122" material="cube"/>
+
+      <!-- visualization axes (rotate with cube) -->
+      <!-- X axis: red -->
+      <geom name="axis_x" type="box" size=".03 .002 .002" pos=".03 0 0" material="red"/>
+      <!-- Y axis: green -->
+      <geom name="axis_y" type="box" size=".003 .03 .002" pos="0 .03 0" material="green"/>
+      <!-- Z axis: blue -->
+      <geom name="axis_z" type="box" size=".003 .002 .03" pos="0 0 .03" material="blue"/>
+    </body>
+  </worldbody>
+
+  <sensor>
+      <framepos name="cube_position" objtype="body" objname="cube"/>
+      <framequat name="cube_orientation" objtype="body" objname="cube"/>
+      <framelinvel name="cube_linear_velocity" objtype="body" objname="cube"/>
+      <frameangvel name="cube_angular_velocity" objtype="body" objname="cube"/>
+  </sensor>
+</mujoco>
