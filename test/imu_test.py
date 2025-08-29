@@ -73,7 +73,22 @@ class IMUCubeVisualizer(Node):
 		q = msg.orientation
 		with self.lock:
 			try:
-				self.latest_quat = np.array([q.w, q.x, q.y, q.z], dtype=float)
+				# incoming is (x,y,z,w) in the message; store as [w,x,y,z]
+				qin = np.array([q.w, q.x, q.y, q.z], dtype=float)
+				# rotation of pi about Z -> quaternion r = [0,0,0,1]
+				# compose r * qin (left-multiply) to apply extra rotation
+				w1, x1, y1, z1 = 0.0, 0.0, 0.0, 1.0
+				w2, x2, y2, z2 = qin
+				w = w1*w2 - x1*x2 - y1*y2 - z1*z2
+				x = w1*x2 + x1*w2 + y1*z2 - z1*y2
+				y = w1*y2 - x1*z2 + y1*w2 + z1*x2
+				z = w1*z2 + x1*y2 - y1*x2 + z1*w2
+				qrot = np.array([w, x, y, z], dtype=float)
+				# normalize to avoid drift
+				norm = np.linalg.norm(qrot)
+				if norm > 0:
+					qrot = qrot / norm
+				self.latest_quat = qrot
 			except Exception:
 				# ignore malformed messages
 				pass
@@ -82,7 +97,20 @@ class IMUCubeVisualizer(Node):
 		q = msg.quaternion
 		with self.lock:
 			try:
-				self.latest_quat = np.array([q.w, q.x, q.y, q.z], dtype=float)
+				qin = np.array([q.w, q.x, q.y, q.z], dtype=float)
+				# apply rotation r = [0,0,0,1] about Z (pi)
+				w1, x1, y1, z1 = 0.0, 0.0, 0.0, 1.0
+				w2, x2, y2, z2 = qin
+				w = w1*w2 - x1*x2 - y1*y2 - z1*z2
+				x = w1*x2 + x1*w2 + y1*z2 - z1*y2
+				y = w1*y2 - x1*z2 + y1*w2 + z1*x2
+				z = w1*z2 + x1*y2 - y1*x2 + z1*w2
+				qrot = np.array([w, x, y, z], dtype=float)
+				# normalize
+				norm = np.linalg.norm(qrot)
+				if norm > 0:
+					qrot = qrot / norm
+				self.latest_quat = qrot
 			except Exception:
 				pass
 

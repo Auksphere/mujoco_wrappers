@@ -1,5 +1,5 @@
 <mujoco model="ur10">
-  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+  <compiler angle="radian" autolimits="true"/>
 
   <default>
     <default class="ur10">
@@ -10,13 +10,13 @@
   </default>
 
   <asset>
-    <mesh name="base" file="base.stl"/>
-    <mesh name="shoulder" file="shoulder.stl"/>
-    <mesh name="upperarm" file="upperarm.stl"/>
-    <mesh name="forearm" file="forearm.stl"/>
-    <mesh name="wrist1" file="wrist1.stl"/>
-    <mesh name="wrist2" file="wrist2.stl"/>
-    <mesh name="wrist3" file="wrist3.stl"/>
+    <mesh name="base" file="./assets/base.stl"/>
+    <mesh name="shoulder" file="./assets/shoulder.stl"/>
+    <mesh name="upperarm" file="./assets/upperarm.stl"/>
+    <mesh name="forearm" file="./assets/forearm.stl"/>
+    <mesh name="wrist1" file="./assets/wrist1.stl"/>
+    <mesh name="wrist2" file="./assets/wrist2.stl"/>
+    <mesh name="wrist3" file="./assets/wrist3.stl"/>
   </asset>
 
   <worldbody>

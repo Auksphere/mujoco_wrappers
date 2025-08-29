@@ -25,7 +25,7 @@
 
   <worldbody>
     <light pos="0 0 1"/>
-    <body name="cube" pos="0.0 0.0 0.5" quat="1 0 0 0">
+    <body name="cube" pos="0.0 0.0 0.5" quat="0 1 0 0">
       <freejoint/>
       <!-- main cube -->
       <geom name="cube" type="box" size=".03 .03 .03" mass=".122" material="cube"/>
