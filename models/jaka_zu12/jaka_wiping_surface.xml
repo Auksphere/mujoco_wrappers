@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="JAKA_Enhanced_Scene">
+
+    <statistic extent="2" meansize=".05"/>
+    <compiler angle="radian" inertiafromgeom="false" coordinate="local" eulerseq="xyz" meshdir="assets" autolimits="true"/>
+    <size njmax="5000" nconmax="250"/>
+    <option timestep="0.001" gravity="0 0 -9.81" jacobian="sparse" iterations="300" solver="Newton" tolerance="1e-10" cone="pyramidal"/>
+
+    <visual>
+        <map force="0.1" zfar="30"/>
+        <headlight diffuse="0.5 0.5 0.5" ambient="0.5 0.45 0.4" specular="1 1 1"/>
+        <rgba haze="0.15 0.25 0.35 1"/>
+        <quality shadowsize="8192"/>
+        <global offwidth="400" offheight="400"/>
+        <scale framelength="0.1" framewidth="0.01" com="0.01"/>
+    </visual>
+
+    <default>
+        <default class="jaka">
+            <joint axis="0 1 0" range="-6.28319 6.28319" armature="0.1" damping="1" limited="true"/>
+            <position ctrlrange="-6.2831 6.2831"/>
+            <general biastype="affine" ctrlrange="-6.2831 6.2831" gainprm="5000" biasprm="0 -5000 -500"/>
+            <geom contype='1' conaffinity='1' condim='6' margin="0.002" solref=".02 1" solimp=".95 .95 .001" friction="0.3"/>
+        </default>
+    </default>
+
+    <asset>
+        <!-- JAKA Robot Meshes -->
+        <mesh name="link0" file="base_link.STL"/>
+        <mesh name="link1" file="1.STL"/>
+        <mesh name="link2" file="2.STL"/>
+        <mesh name="link3" file="3.STL"/>
+        <mesh name="link4" file="4.STL"/>
+        <mesh name="link5" file="5.STL"/>
+        <mesh name="link6" file="6.STL"/>
+
+        <!-- Textures and Materials -->
+        <texture type="skybox" builtin="gradient" rgb1="0.53 0.81 0.92" rgb2="1 1 1" width="512" height="512"/>
+        <texture name="texplane" type="2d" builtin="checker" rgb1=".05 .05 .05" rgb2=".05 .05 .05" width="512" height="512" mark="cross" markrgb=".1 .1 .1"/>
+        <material name="matplane" reflectance="0.25" texture="texplane" texrepeat="1 1" texuniform="true"/>
+        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+        <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="2 2" reflectance="0.15"/>
+    </asset>
+
+    <worldbody>
+        <!-- Floor -->
+        <geom name="floor" pos="0 0 0.0" size="0 0 1" type="plane" material="groundplane" condim="6" contype="1"/>
+        
+        <!-- Lighting -->
+        <light directional="true" diffuse=".8 .8 .8" specular=".2 .2 .2" pos="0 0 5" dir="1.5 1.0 -2"/>
+
+        <!-- JAKA Robot -->
+        <body name="jaka_base" pos="0 0 0" childclass="jaka">
+            <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="0.584 0.584 0.584 1" mesh="link0"/>
+            <geom type="mesh" rgba="0.584 0.584 0.584 1" mesh="link0"/>
+            
+            <body name="jaka_link1" pos="0 0 0.10765">
+                <inertial pos="-0.000328432 0.0040609 -0.0250109" quat="0.494863 -0.0216305 0.0243938 0.868359" mass="3.78" diaginertia="0.0405059 0.0403714 0.0342898"/>
+                <joint name="jaka_joint1" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28" armature="4" frictionloss="0"/>
+                <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link1"/>
+                
+                <body name="jaka_link2" quat="0.707105 0.707108 0 0">
+                    <inertial pos="0.2975 -1.25165e-08 -0.16607" quat="0.499974 0.499521 0.500477 0.500027" mass="12.44" diaginertia="1.66881 1.65303 0.116455"/>
+                    <joint name="jaka_joint2" pos="0 0 0" axis="0 0 1" limited="true" range="-1.48 4.62" armature="4" frictionloss="0"/>
+                    <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link2"/>
+                    
+                    <body name="jaka_link3" pos="0.595 0 0">
+                        <inertial pos="0.294234 -4.72319e-06 -0.0241861" quat="-0.00022526 0.704551 -0.000206596 0.709653" mass="5.06" diaginertia="0.498538 0.497634 0.021265"/>
+                        <joint name="jaka_joint3" pos="0 0 0" axis="0 0 1" limited="true" range="-3.05 3.05" armature="1" frictionloss="0"/>
+                        <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link3"/>
+                        
+                        <body name="jaka_link4" pos="0.5715 0 -0.1315">
+                            <inertial pos="4.22018e-06 -0.0150344 0.00216594" quat="0.677782 0.701328 0.159558 -0.152616" mass="0.883" diaginertia="0.00459197 0.0045525 0.00363768"/>
+                            <joint name="jaka_joint4" pos="0 0 0" axis="0 0 1" limited="true" range="-1.48 4.62" armature="1" frictionloss="0"/>
+                            <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link4"/>
+                            
+                            <body name="jaka_link5" pos="0 -0.115 0" quat="0.707105 0.707108 0 0">
+                                <inertial pos="3.86595e-06 0.0042653 -0.00184283" quat="0.695151 0.688192 -0.146515 0.147274" mass="1" diaginertia="0.0070303 0.00698932 0.00413442"/>
+                                <joint name="jaka_joint5" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28" armature="0.8" frictionloss="0"/>
+                                <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link5"/>
+                                
+                                <body name="jaka_link6" pos="0 0.1035 0" quat="0.707105 -0.707108 0 0">
+                                    <inertial pos="-0.000786085 3.88801e-05 -0.0163247" quat="-0.134296 0.689453 0.135461 0.698763" mass="0.22" diaginertia="0.00106472 0.000657738 0.000588131"/>
+                                    <joint name="jaka_joint6" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28" armature="0.8" frictionloss="0"/>
+                                    <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link6"/>
+
+                                    <!-- End Effector Assembly -->
+                                    <body name="jaka_end_effector_mount" pos="0.0 0.0 0.0" euler="0 0 0">
+                                        <inertial pos="0 0 0.02" mass="0.1" diaginertia="0.001 0.001 0.001"/>
+                                        
+                                        
+                                        <!-- Simple Gripper Body -->
+                                        <body name="jaka_gripper_body" pos="0.0 0.0 0.020">
+                                            <geom name="gripper_palm" type="box" size="0.04 0.03 0.02" rgba="0.3 0.3 0.3 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                            <inertial pos="0 0 0" mass="0.2" diaginertia="0.001 0.001 0.001"/>
+                                            
+                                            <!-- Gripper Finger 1 -->
+                                            <body name="jaka_gripper_finger1" pos="-0.01 0.0 0.045">
+                                                <inertial pos="0 0 0" mass="0.05" diaginertia="0.0001 0.0001 0.0001"/>
+                                                <geom name="finger1" type="box" size="0.003 0.015 0.035" rgba="0.2 0.2 0.2 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                                <!-- <joint axis="1 0 0" pos="0 0 0" name="jaka_finger1_joint" damping="2000" range="0.0 0.04" type="slide"/> -->
+                                            </body>
+                                            
+                                            <!-- Gripper Finger 2 -->
+                                            <body name="jaka_gripper_finger2" pos="0.01 0.0 0.045">
+                                                <inertial pos="0 0 0" mass="0.05" diaginertia="0.0001 0.0001 0.0001"/>
+                                                <geom name="finger2" type="box" size="0.003 0.015 0.035" rgba="0.2 0.2 0.2 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                                <!-- <joint axis="1 0 0" pos="0 0 0" name="jaka_finger2_joint" damping="2000" range="-0.04 0.0" type="slide"/> -->
+                                            </body>
+                                        </body>
+                                        
+                                        <!-- End Effector Site -->
+                                        <site name="jaka_end_effector" type="sphere" size="0.004" pos="0.0 0 0.098" euler="0 0 0" rgba="1 0 0 1.0"/>
+                                    </body>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body>
+            </body>
+        </body>
+
+        <!-- Work Platform -->
+        <body name="work_platform" pos="0.8 0.0 0.20">
+            <geom name='platform_base' type="box" size="0.25 0.25 0.020" pos="0.0 0.0 0" rgba="0.4 0.4 0.4 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+            <inertial pos="0 0 0" mass="5.0" diaginertia="0.1 0.1 0.1"/>
+        </body>
+
+
+    </worldbody>
+
+    <actuator>
+        <!-- JAKA Joint Actuators -->
+        <motor name="jaka_joint1_actuator" joint="jaka_joint1" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-330 330"/>
+        <motor name="jaka_joint2_actuator" joint="jaka_joint2" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-330 330"/>
+        <motor name="jaka_joint3_actuator" joint="jaka_joint3" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-150 150"/>
+        <motor name="jaka_joint4_actuator" joint="jaka_joint4" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-56 56"/>
+        <motor name="jaka_joint5_actuator" joint="jaka_joint5" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-56 56"/>
+        <motor name="jaka_joint6_actuator" joint="jaka_joint6" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-56 56"/>
+        
+        <!-- Gripper Actuators -->
+        <!-- <position ctrllimited="true" ctrlrange="-0.04 0" joint="jaka_finger1_joint" kp="10000" name="jaka_finger1_actuator"/> -->
+        <!-- <position ctrllimited="true" ctrlrange="0.0 0.04" joint="jaka_finger2_joint" kp="10000" name="jaka_finger2_actuator"/> -->
+    </actuator>
+
+    <sensor>
+        <!-- End Effector Position -->
+        <framepos objtype="site" objname="jaka_end_effector"/>
+        
+        <!-- Force and Torque Sensors -->
+        <force name="jaka_force_sensor" site="jaka_end_effector"/>
+        <torque name="jaka_torque_sensor" site="jaka_end_effector"/>
+        
+        <!-- Joint Position Sensors -->
+        <jointpos name="jaka_joint1_pos" joint="jaka_joint1"/>
+        <jointpos name="jaka_joint2_pos" joint="jaka_joint2"/>
+        <jointpos name="jaka_joint3_pos" joint="jaka_joint3"/>
+        <jointpos name="jaka_joint4_pos" joint="jaka_joint4"/>
+        <jointpos name="jaka_joint5_pos" joint="jaka_joint5"/>
+        <jointpos name="jaka_joint6_pos" joint="jaka_joint6"/>
+        
+        <!-- Gripper Position Sensors
+        <jointpos name="jaka_finger1_pos" joint="jaka_finger1_joint"/>
+        <jointpos name="jaka_finger2_pos" joint="jaka_finger2_joint"/> -->
+    </sensor>
+
+</mujoco>
