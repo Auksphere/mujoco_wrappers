@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="CHIN_Enhanced_Scene">
+
+    <statistic extent="2" meansize=".05"/>
+    <compiler angle="radian" inertiafromgeom="false" coordinate="local" eulerseq="xyz" meshdir="assets" autolimits="true"/>
+    <size njmax="5000" nconmax="250"/>
+    <option timestep="0.001" gravity="0 0 -9.81" jacobian="sparse" iterations="300" solver="Newton" tolerance="1e-10" cone="pyramidal"/>
+
+    <visual>
+        <map force="0.1" zfar="30"/>
+        <headlight diffuse="0.5 0.5 0.5" ambient="0.5 0.45 0.4" specular="1 1 1"/>
+        <rgba haze="0.15 0.25 0.35 1"/>
+        <quality shadowsize="8192"/>
+        <global offwidth="400" offheight="400"/>
+        <scale framelength="0.1" framewidth="0.01" com="0.01"/>
+    </visual>
+
+    <default>
+        <default class="chin">
+            <joint armature="0.1" damping="1" limited="true"/>
+            <geom contype='1' conaffinity='1' condim='6' margin="0.002" solref=".02 1" solimp=".95 .95 .001" friction="0.3"/>
+        </default>
+    </default>
+
+    <asset>
+        <!-- CHIN Robot Meshes -->
+        <mesh name="link0" file="link0.STL" />
+        <mesh name="link1" file="link1.STL" />
+        <mesh name="link2" file="link2.STL" />
+        <mesh name="link3" file="link3.STL" />
+        <mesh name="link4" file="link4.STL" />
+        <mesh name="link5" file="link5.STL" />
+        <mesh name="link6" file="link6.STL" />
+
+        <!-- Textures and Materials -->
+        <texture type="skybox" builtin="gradient" rgb1="0.53 0.81 0.92" rgb2="1 1 1" width="512" height="512"/>
+        <texture name="texplane" type="2d" builtin="checker" rgb1=".05 .05 .05" rgb2=".05 .05 .05" width="512" height="512" mark="cross" markrgb=".1 .1 .1"/>
+        <material name="matplane" reflectance="0.25" texture="texplane" texrepeat="1 1" texuniform="true"/>
+        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+        <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="2 2" reflectance="0.15"/>
+    </asset>
+
+    <worldbody>
+        <!-- Floor -->
+        <geom name="floor" pos="0 0 0.0" size="0 0 1" type="plane" material="groundplane" condim="6" contype="1"/>
+        
+        <!-- Lighting -->
+        <light directional="true" diffuse=".8 .8 .8" specular=".2 .2 .2" pos="0 0 5" dir="1.5 1.0 -2"/>
+
+        <!-- CHIN Robot -->
+        <body name="chin_link0" childclass="chin">
+            <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" mesh="link0" />
+            <geom type="mesh" rgba="1 1 1 1" mesh="link0" />
+            <body name="chin_link1" pos="0 0 0.283" quat="0 1 0 0">
+                <inertial pos="0 0.043 0.005" quat="1 0 0.000434518 0" mass="5.675" diaginertia="1.1632 1.1632 0.0124991"/>
+                <joint name="chin_joint1" pos="0 0 0" axis="0 0 1" limited="true" range="-3.05 3.05" />
+                <geom type="mesh" rgba="1 1 1 1" mesh="link1" />
+                <body name="chin_link2" pos="0 0 0" quat="0.5 0.5 -0.5 0.5">
+                    <inertial pos="-0.298 0 -0.126" quat="0.47932 0.47932 0.519858 0.519858" mass="5.466" diaginertia="0.124731 0.122 0.0132685" />
+                    <joint name="chin_joint2" pos="0 0 0" axis="0 0 1" limited="true" range="-3.05 3.05" />
+                    <geom type="mesh" rgba="1 1 1 1" mesh="link2" />
+                    <body name="chin_link3" pos="-0.4 0 0" quat="0 1 0 0">
+                        <inertial pos="-0.274 0 -0.061" quat="0.464528 0.464528 0.533117 0.533117" mass="4.294" diaginertia="0.0823816 0.076 0.00861843" />
+                        <joint name="chin_joint3" pos="0 0 0" axis="0 0 1" limited="true" range="-3.05 3.05" />
+                        <geom type="mesh" rgba="1 1 1 1" mesh="link3" />
+                        <body name="chin_link4" pos="-0.36 0 0.19875" quat="0 0.707107 0.707107 0">
+                            <inertial pos="0 -0.055 0.001" quat="0.707107 0.707107 0 0" mass="2.732" diaginertia="0.005 0.005 0.003" />
+                            <joint name="chin_joint4" pos="0 0 0" axis="0 0 1" limited="true" range="-3.05 3.05" />
+                            <geom type="mesh" rgba="1 1 1 1" mesh="link4" />
+                            <body name="chin_link5" pos="0 -0.16975 0" quat="0.707107 -0.707107 0 0">
+                                <inertial pos="0 0.055 0.001" quat="0.707107 0.707107 0 0" mass="2.732" diaginertia="0.005 0.005 0.003" />
+                                <joint name="chin_joint5" pos="0 0 0" axis="0 0 1" limited="true" range="-3.05 3.05" />
+                                <geom type="mesh" rgba="1 1 1 1" mesh="link5" />
+                                <body name="chin_link6" pos="0 0.14875 0" quat="0.707107 0.707107 0 0">
+                                    <inertial pos="0 0 0.017" mass="0.28" diaginertia="0.01 0.01 0.01" />
+                                    <joint name="chin_joint6" pos="0 0 0" axis="0 0 1" limited="true" range="-3.05 3.05" />
+                                    <geom type="mesh" rgba="1 1 1 1" mesh="link6" />
+                                    
+                                    <!-- End Effector Assembly -->
+                                    <body name="chin_end_effector_mount" pos="0.0 0.0 -0.015" euler="0 0 0">
+                                        <inertial pos="0 0 0.02" mass="0.1" diaginertia="0.001 0.001 0.001"/>
+                                        
+                                        <!-- Simple Gripper Body -->
+                                        <body name="chin_gripper_body" pos="0.0 0.0 0.0">
+                                            <geom name="gripper_palm" type="box" size="0.04 0.03 0.02" rgba="0.3 0.3 0.3 1" friction="0.5" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                            <inertial pos="0 0 0" mass="0.2" diaginertia="0.001 0.001 0.001"/>
+                                            
+                                            <!-- Gripper Finger 1 -->
+                                            <body name="chin_gripper_finger1" pos="-0.01 0.0 -0.03">
+                                                <inertial pos="0 0 0" mass="0.05" diaginertia="0.0001 0.0001 0.0001"/>
+                                                <geom name="finger1" type="box" size="0.003 0.015 0.035" rgba="0.2 0.2 0.2 1" friction="0.8" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                                <!-- <joint axis="1 0 0" pos="0 0 0" name="chin_finger1_joint" damping="2000" range="0.0 0.04" type="slide"/> -->
+                                            </body>
+                                            
+                                            <!-- Gripper Finger 2 -->
+                                            <body name="chin_gripper_finger2" pos="0.01 0.0 -0.03">
+                                                <inertial pos="0 0 0" mass="0.05" diaginertia="0.0001 0.0001 0.0001"/>
+                                                <geom name="finger2" type="box" size="0.003 0.015 0.035" rgba="0.2 0.2 0.2 1" friction="0.8" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                                <!-- <joint axis="1 0 0" pos="0 0 0" name="chin_finger2_joint" damping="2000" range="-0.04 0.0" type="slide"/> -->
+                                            </body>
+                                        </body>
+                                        
+                                        <!-- End Effector Site -->
+                                        <site name="chin_end_effector" type="sphere" size="0.004" pos="0.0 0 -0.06" euler="0 0 0" rgba="1 0 0 1.0"/>
+                                    </body>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body>
+            </body>
+        </body>
+
+        <!-- Work Platform -->
+        <body name="hole" pos="0.6 0 -0.1">
+            <geom name='hole_base_geom' type="sphere" size="0.3" pos="0.0 0.0 0.0" rgba="0.3 0.3 0.3 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+
+        </body>
+
+    </worldbody>
+
+    <actuator>
+        <!-- CHIN Joint Actuators -->
+        <general class="chin" name="actuator1" joint="chin_joint1" ctrlrange="-200 200"/>
+        <general class="chin" name="actuator2" joint="chin_joint2" ctrlrange="-100 100"/>
+        <general class="chin" name="actuator3" joint="chin_joint3" ctrlrange="-100 100"/>
+        <general class="chin" name="actuator4" joint="chin_joint4" ctrlrange="-50 50"/>
+        <general class="chin" name="actuator5" joint="chin_joint5" ctrlrange="-50 50"/>
+        <general class="chin" name="actuator6" joint="chin_joint6" ctrlrange="-50 50"/>
+        
+        <!-- Gripper Actuators
+        <position ctrllimited="true" ctrlrange="0.0 0.04" joint="chin_finger1_joint" kp="10000" name="chin_finger1_actuator"/>
+        <position ctrllimited="true" ctrlrange="-0.04 0.0" joint="chin_finger2_joint" kp="10000" name="chin_finger2_actuator"/> -->
+    </actuator>
+
+    <sensor>
+        <!-- End Effector Position -->
+        <framepos objtype="site" objname="chin_end_effector"/>
+        
+        <!-- Force and Torque Sensors -->
+        <force name="chin_force_sensor" site="chin_end_effector"/>
+        <torque name="chin_torque_sensor" site="chin_end_effector"/>
+        
+        <!-- Joint Position Sensors -->
+        <jointpos name="chin_joint1_pos" joint="chin_joint1"/>
+        <jointpos name="chin_joint2_pos" joint="chin_joint2"/>
+        <jointpos name="chin_joint3_pos" joint="chin_joint3"/>
+        <jointpos name="chin_joint4_pos" joint="chin_joint4"/>
+        <jointpos name="chin_joint5_pos" joint="chin_joint5"/>
+        <jointpos name="chin_joint6_pos" joint="chin_joint6"/>
+        
+        <!-- Gripper Position Sensors
+        <jointpos name="chin_finger1_pos" joint="chin_finger1_joint"/>
+        <jointpos name="chin_finger2_pos" joint="chin_finger2_joint"/> -->
+    </sensor>
+
+</mujoco>
