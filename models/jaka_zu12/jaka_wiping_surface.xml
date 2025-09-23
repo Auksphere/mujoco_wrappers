@@ -121,7 +121,7 @@
         </body>
 
         <!-- Work Platform -->
-        <body name="work_platform" pos="0.8 0.0 0.20">
+        <body name="work_platform" pos="0.0 -0.7 0.03">
             <geom name='platform_base' type="box" size="0.25 0.25 0.020" pos="0.0 0.0 0" rgba="0.4 0.4 0.4 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
             <inertial pos="0 0 0" mass="5.0" diaginertia="0.1 0.1 0.1"/>
         </body>

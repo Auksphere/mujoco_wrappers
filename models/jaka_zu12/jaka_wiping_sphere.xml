@@ -50,7 +50,7 @@
         <light directional="true" diffuse=".8 .8 .8" specular=".2 .2 .2" pos="0 0 5" dir="1.5 1.0 -2"/>
 
         <!-- JAKA Robot -->
-        <body name="jaka_base" pos="0 0 0" childclass="jaka">
+        <body name="jaka_base" pos="0 0 0.05" childclass="jaka">
             <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="0.584 0.584 0.584 1" mesh="link0"/>
             <geom type="mesh" rgba="0.584 0.584 0.584 1" mesh="link0"/>
             
@@ -121,8 +121,8 @@
         </body>
 
         <!-- Work Platform -->
-        <body name="hole" pos="0.6 0.0 -0.1">
-            <geom name='hole_base_geom' type="sphere" size="0.3" pos="0.0 0.0 0.0" rgba="0.3 0.3 0.3 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+        <body name="hole" pos="0.0 -0.7 -0.028">
+            <geom name='hole_base_geom' type="sphere" size="0.1" pos="0.0 0.0 0.0" rgba="0.3 0.3 0.3 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
         </body>
 
 

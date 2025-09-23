@@ -119,7 +119,8 @@ class MujocoNode(Node):
         elif self.rbt == 'jaka':
             self.n = 6
             self.xml_file = 'models/jaka_zu12/jaka_wiping_surface.xml'
-            self.desired_position = [-0.149, 1.51, -1.73, 1.8, 1.47, 2.97]
+            # self.desired_position = [-0.149, 1.51, -1.73, 1.8, 1.47, 2.97]
+            self.desired_position = [-1.95, 1.17, -2.0, 2.3, 2.0, 1.15]
             # self.desired_position = [0.0] * self.n
             self.k_p = [400, 400, 400, 50, 25, 5]
             self.k_d = [5, 5, 5, 3, 2, 1]
@@ -147,12 +148,12 @@ class MujocoNode(Node):
         self.iter = 0
         self.dt = 0.001 # Should be set from model
         
-        self.task = input("Enter the task: regulation/circle/line/sphere: ") # "regulation", "circle", "line", "sphere"
+        self.task = input("Enter the task name: regulation/circle/line/sphere: ") # "regulation", "circle", "line", "sphere"
         
         if self.task == "sphere":
             if self.rbt == "jaka":
                 self.xml_file = '/home/auksphere/robotics/mujoco_wrappers/models/jaka_zu12/jaka_wiping_sphere.xml'
-            else:
+            elif self.rbt == "chin":
                 self.xml_file = '/home/auksphere/robotics/mujoco_wrappers/models/chin_crb7/chin_wiping_sphere.xml'
 
         self.pd_t, self.Rd_t, self.dpd_t, self.dRd_t, self.ddpd_t, self.ddRd_t = initialize_trajectory(self.task, name = self.rbt)

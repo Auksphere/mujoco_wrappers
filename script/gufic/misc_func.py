@@ -66,25 +66,25 @@ def initialize_trajectory(task, max_time = 10, name = "jaka"):
         t = sp.symbols('t')
 
         if task == "regulation":
-            pd_default = np.array([0.60, 0.0, 0.25])
+            pd_default = np.array([0.0, -0.7, 0.25])
             Rd_default = np.array([[0, 1, 0],
                                 [1, 0, 0],
                                 [0, 0, -1]])
             
         elif task == "circle":
-            pd_default = np.array([0.8, 0.0, 0.21])
+            pd_default = np.array([0.0, -0.7, 0.215-0.17])
             Rd_default = np.array([[0, 1, 0],
                                 [1, 0, 0],
                                 [0, 0, -1]])
             
         elif task == "line":
-            pd_default = np.array([0.8, 0.0, 0.21])
+            pd_default = np.array([0.0, -0.7, 0.215-0.17])
             Rd_default = np.array([[0, 1, 0],
                                 [1, 0, 0],
                                 [0, 0, -1]])
             
         elif task == "sphere":
-            pd_default = np.array([0.6, 0.0, -0.10]) #center of the sphere
+            pd_default = np.array([0.0, -0.7, -0.028]) #center of the sphere
             Rd_default = np.array([[0, 1, 0],
                                 [1, 0, 0],
                                 [0, 0, -1]])
@@ -115,9 +115,11 @@ def initialize_trajectory(task, max_time = 10, name = "jaka"):
 
 
             # r_sphere = 0.304
-            r_sphere = 0.286
-            pd_t_sim = pd_default_sym + sp.Matrix([0, r_sphere * sp.sin(theta),  r_sphere * sp.cos(theta)])
-            rotmat_y = sp.Matrix([[sp.cos(-theta), 0, sp.sin(-theta)], [0, 1, 0], [-sp.sin(-theta), 0, sp.cos(-theta)]])
+            # r_sphere = 0.286
+            r_sphere = 0.088
+            pd_t_sim = pd_default_sym + sp.Matrix([r_sphere * sp.sin(theta), 0, r_sphere * sp.cos(theta)])
+            # rotmat_y = sp.Matrix([[sp.cos(-theta), 0, sp.sin(-theta)], [0, 1, 0], [-sp.sin(-theta), 0, sp.cos(-theta)]])
+            rotmat_y = sp.Matrix([[1, 0, 0], [0, sp.cos(theta), -sp.sin(theta)], [0, sp.sin(theta), sp.cos(theta)]])
             Rd_t_sim = Rd_default_sym @ rotmat_y
 
 
@@ -234,6 +236,7 @@ def set_gains(controller = "GUFIC", task = "regulation", name = "jaka"):
             KR = np.eye(3) * np.array([1500, 1500, 1500])
             Kd = np.eye(6) * np.array([500, 500, 500, 500, 500, 500])
 
+            # PID gains for the force tracking controller
             # kp_force = 1.0
             # kd_force = 0.5
             # ki_force = 4.0
@@ -258,9 +261,9 @@ def set_gains(controller = "GUFIC", task = "regulation", name = "jaka"):
                 # kp_force = 1.0
                 # kd_force = 0.5
                 # ki_force = 4.0
-                kp_force = 1.0  
-                kd_force = 0.5
-                ki_force = 0.6
+                kp_force = 1.5  
+                kd_force = 4.0
+                ki_force = -1.0
 
         zeta = 5.0
         
