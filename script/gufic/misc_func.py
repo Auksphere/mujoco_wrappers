@@ -72,7 +72,7 @@ def initialize_trajectory(task, max_time = 10, name = "jaka"):
                                 [0, 0, -1]])
             
         elif task == "circle":
-            pd_default = np.array([0.0, -0.7, 0.215-0.17])
+            pd_default = np.array([0.0, -0.7, 0.05])
             Rd_default = np.array([[0, 1, 0],
                                 [1, 0, 0],
                                 [0, 0, -1]])
@@ -103,7 +103,7 @@ def initialize_trajectory(task, max_time = 10, name = "jaka"):
             Rd_t_sim = Rd_default_sym
             
         elif task == 'line':
-            pd_t_sim = pd_default_sym + sp.Matrix([0, 0.05 * (t - max_time / 2), 0])
+            pd_t_sim = pd_default_sym + sp.Matrix([0.05 * (t - max_time / 2), 0, 0])
             Rd_t_sim = Rd_default_sym
 
         elif task == 'sphere':

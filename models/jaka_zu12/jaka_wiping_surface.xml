@@ -33,7 +33,7 @@
         <mesh name="link4" file="4.STL"/>
         <mesh name="link5" file="5.STL"/>
         <mesh name="link6" file="6.STL"/>
-
+        <mesh name="EDEFF" file="EDEFF.STL"/>
         <!-- Textures and Materials -->
         <texture type="skybox" builtin="gradient" rgb1="0.53 0.81 0.92" rgb2="1 1 1" width="512" height="512"/>
         <texture name="texplane" type="2d" builtin="checker" rgb1=".05 .05 .05" rgb2=".05 .05 .05" width="512" height="512" mark="cross" markrgb=".1 .1 .1"/>
@@ -88,29 +88,51 @@
                                     <body name="jaka_end_effector_mount" pos="0.0 0.0 0.0" euler="0 0 0">
                                         <inertial pos="0 0 0.02" mass="0.1" diaginertia="0.001 0.001 0.001"/>
                                         
-                                        
-                                        <!-- Simple Gripper Body -->
-                                        <body name="jaka_gripper_body" pos="0.0 0.0 0.020">
-                                            <geom name="gripper_palm" type="box" size="0.04 0.03 0.02" rgba="0.3 0.3 0.3 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
-                                            <inertial pos="0 0 0" mass="0.2" diaginertia="0.001 0.001 0.001"/>
+                                        <!-- SUNRISE INSTRUMENTS D950M F250N Force/Torque Sensor -->
+                                        <!-- Based on M4313M4E specifications: 250N force, 24Nm torque capacity -->
+                                        <body name="jaka_force_sensor_body" pos="0.0 0.0 0.015" euler="0 0 0">
+                                            <!-- Sensor housing geometry based on actual dimensions -->
+                                            <geom name="force_sensor_housing" type="cylinder" size="0.0475 0.01425" rgba="0.7 0.7 0.8 1" 
+                                                  friction="0.3" contype='1' conaffinity='1' condim='6' 
+                                                  solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                            <!-- Sensor center hub -->
+                                            <geom name="force_sensor_hub" type="cylinder" size="0.01574 0.003" pos="0 0 -0.01725" rgba="0.5 0.5 0.6 1" 
+                                                  friction="0.3" contype='1' conaffinity='1' condim='6' 
+                                                  solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                            <!-- Actual sensor mass: 0.36kg -->
+                                            <inertial pos="0 0 0" mass="0.36" diaginertia="0.0008 0.0008 0.0004"/>
                                             
-                                            <!-- Gripper Finger 1 -->
-                                            <body name="jaka_gripper_finger1" pos="-0.01 0.0 0.045">
-                                                <inertial pos="0 0 0" mass="0.05" diaginertia="0.0001 0.0001 0.0001"/>
-                                                <geom name="finger1" type="box" size="0.003 0.015 0.035" rgba="0.2 0.2 0.2 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
-                                                <!-- <joint axis="1 0 0" pos="0 0 0" name="jaka_finger1_joint" damping="2000" range="0.0 0.04" type="slide"/> -->
-                                            </body>
+                                            <geom name="force_sensor_adaptor" type="cylinder" size="0.0375 0.00575" pos="0 0 0.02" rgba="0.5 0.5 0.6 1" 
+                                                  friction="0.3" contype='1' conaffinity='1' condim='6' 
+                                                  solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+
+                                            <!-- Force sensor measurement site -->
+                                            <site name="jaka_force_sensor_site" type="sphere" size="0.002" pos="0.0 0 0.0115" euler="0 0 0" rgba="0 1 0 0.8"/>
                                             
-                                            <!-- Gripper Finger 2 -->
-                                            <body name="jaka_gripper_finger2" pos="0.01 0.0 0.045">
-                                                <inertial pos="0 0 0" mass="0.05" diaginertia="0.0001 0.0001 0.0001"/>
-                                                <geom name="finger2" type="box" size="0.003 0.015 0.035" rgba="0.2 0.2 0.2 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
-                                                <!-- <joint axis="1 0 0" pos="0 0 0" name="jaka_finger2_joint" damping="2000" range="-0.04 0.0" type="slide"/> -->
+                                            <!-- End Effector using EDEFF STL mesh -->
+                                            <body name="jaka_end_effector_body" pos="-0.054 0.054 0.08" euler="3.1415926 0 0">
+                                                <!-- End effector visual and collision geometry using STL file -->
+                                                <geom name="end_effector_visual" type="mesh" mesh="EDEFF" 
+                                                    rgba="0.2 0.2 0.2 1" contype="0" conaffinity="0" group="1"/>
+                                                <geom name="end_effector_collision" type="mesh" mesh="EDEFF" 
+                                                    rgba="0.2 0.2 0.2 1" friction="0.8" contype='1' conaffinity='1' condim='6' 
+                                                    solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                                <!-- End effector inertial properties (from CAD) -->
+                                                <inertial pos="0 0 -0.00449" mass="0.06104" diaginertia="4.6157e-5 4.6325e-5 6.5702e-5"/>
+
+                                                <!-- Pencil in the center hole -->
+                                                <body name="pencil" pos="0.054 0.054 -0.02" euler="0 0 0">
+                                                    <!-- Pencil body -->
+                                                    <geom name="pencil_body" type="cylinder" size="0.003 0.04" pos="0 0 0.015" rgba="0 0.3 0 1"/>
+                                                 
+                                                    <!-- Inertial -->
+                                                    <inertial pos="0 0 0.04" mass="0.01" diaginertia="1e-6 1e-6 2e-6"/>
+                                                </body>
                                             </body>
                                         </body>
                                         
                                         <!-- End Effector Site -->
-                                        <site name="jaka_end_effector" type="sphere" size="0.004" pos="0.0 0 0.098" euler="0 0 0" rgba="1 0 0 1.0"/>
+                                        <site name="jaka_end_effector" type="sphere" size="0.003" pos="0.0 0 0.14" euler="0 0 0" rgba="0 0 0 1.0"/>
                                     </body>
                                 </body>
                             </body>
