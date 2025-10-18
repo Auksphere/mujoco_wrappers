@@ -143,6 +143,12 @@ class MujocoNode(Node):
         self.trajectory_csv_writer.writerow(['time', 'desired_x', 'desired_y', 'desired_z', 
                                            'actual_x', 'actual_y', 'actual_z',
                                            'error_x', 'error_y', 'error_z', 'error_norm'])
+        
+        # Create CSV file for contact force data
+        self.force_csv_file = open(f'log/contact_forces.csv', mode='w', newline='')
+        self.force_csv_writer = csv.writer(self.force_csv_file)
+        self.force_csv_writer.writerow(['time', 'fx', 'fy', 'fz', 'mx', 'my', 'mz', 
+                                       'force_magnitude', 'torque_magnitude'])
 
         # GUFIC Initialization
         self.iter = 0
@@ -342,6 +348,20 @@ class MujocoNode(Node):
                         error_norm  # error norm
                     ])
                     
+                    # Record contact force data
+                    Fe, d_Fe = self.robot_state.get_ee_force()
+                    Fe_flat = Fe.flatten()
+                    force_magnitude = np.linalg.norm(Fe_flat[:3])
+                    torque_magnitude = np.linalg.norm(Fe_flat[3:])
+                    
+                    self.force_csv_writer.writerow([
+                        t,  # time
+                        Fe_flat[0], Fe_flat[1], Fe_flat[2],  # force components
+                        Fe_flat[3], Fe_flat[4], Fe_flat[5],  # torque components
+                        force_magnitude,  # force magnitude
+                        torque_magnitude  # torque magnitude
+                    ])
+                    
                     tau_cmd = self.geometric_unified_force_impedance_control()
                     self.robot_state.set_control_torque(tau_cmd)
                     self.robot_state.update_dynamic()
@@ -375,6 +395,7 @@ def main(args=None):
     finally:
         mujoco_node.joint_csv_file.close()
         mujoco_node.trajectory_csv_file.close()
+        mujoco_node.force_csv_file.close()
         
         mujoco_node.destroy_node()
         rclpy.shutdown()
