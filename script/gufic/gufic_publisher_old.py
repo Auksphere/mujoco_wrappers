@@ -15,8 +15,6 @@ from scipy.linalg import expm
 # Add GUFIC_mujoco path to import utilities
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__))))
 from misc_func import initialize_trajectory, set_gains, vee_map, hat_map, adjoint_g_ed, adjoint_g_ed_dual, adjoint_g_ed_deriv
-from filter import ButterLowPass
-from scipy.linalg import block_diag, expm
 
 def adjoint_g(g):
     R = g[:3, :3]
@@ -34,59 +32,15 @@ class RobotState:
         self.ee_name = ee_name
         self.robot_name = robot_name
         self.site_id = self.model.site(ee_name).id
-        self.robot_name == 'jaka'
-        self.ee_body_id = self.model.body('jaka_end_effector_mount').id
+        if self.robot_name == 'chin':
+            self.ee_body_id = self.model.body('chin_end_effector_mount').id
+        elif self.robot_name == 'jaka':
+            self.ee_body_id = self.model.body('jaka_end_effector_mount').id
+        else:
+            raise ValueError("Invalid robot name for RobotState")
             
         self.Jp = np.zeros((3, self.model.nv))
         self.Jr = np.zeros((3, self.model.nv))
-        
-        # Initialize low pass filter for force sensor
-        dt = model.opt.timestep
-        fs = 1 / dt
-        cutoff = 10
-        self.lp_filter = ButterLowPass(cutoff, fs, order=5)
-        
-        # Initialize state-space filter
-        cut_off_freq = 5
-        self.Ad, self.Bd = self.define_filter(cut_off_freq, dt)
-        self.filter_state = np.zeros((12, 1))
-
-    def define_filter(self, cutoff, dt, dim=6):
-        ws = cutoff
-        A = np.array([[0, 1],
-                      [-ws**2, -2 * 1 * ws]])
-        B = np.array([[0], [ws**2]])
-        
-        # Manual discretization using matrix exponential
-        # For system dx/dt = Ax + Bu, discrete form is x[k+1] = Ad*x[k] + Bd*u[k]
-        # where Ad = exp(A*dt) and Bd = integral_0^dt(exp(A*tau)*B*dtau)
-        
-        # Calculate Ad = exp(A*dt)
-        Ad1 = expm(A * dt)
-        
-        # Calculate Bd using approximation: Bd ≈ A^(-1)*(Ad - I)*B
-        if np.linalg.det(A) != 0:
-            Bd1 = np.linalg.inv(A) @ (Ad1 - np.eye(2)) @ B
-        else:
-            # If A is singular, use simple approximation Bd ≈ B*dt
-            Bd1 = B * dt
-
-        # stack Ad and Bd for dim times
-        Ad = block_diag(*[Ad1 for _ in range(dim)])
-        Bd = block_diag(*[Bd1 for _ in range(dim)])
-
-        return Ad, Bd
-    
-    def lp_filter_implemented(self, force_torque):
-        # 0, 2, 4, 6, 8, 10 indices are filtered values
-        xf = self.filter_state[::2]
-
-        # 1, 3, 5, 7, 9, 11 indices are filtered derivative values
-        dxf = self.filter_state[1::2]
-
-        self.filter_state = self.Ad @ self.filter_state + self.Bd @ force_torque.reshape((-1,1))
-
-        return xf, dxf
 
     def update(self):
         mujoco.mj_kinematics(self.model, self.data)
@@ -127,31 +81,17 @@ class RobotState:
         return self.data.qfrc_bias[:self.model.nv]
 
     def get_ee_force(self):
-        # Try to get force sensor - use the appropriate sensor name for your model
-        try:
-            sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, "jaka_force_sensor")
-        except:
-            sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, "force_sensor")
-
-        # Get address and dimension of the sensor
-        adr = self.model.sensor_adr[sensor_id]
-        dim = self.model.sensor_dim[sensor_id]
-        force = np.copy(self.data.sensordata[adr:adr + dim])
-        
-        # Try to get torque sensor - use the appropriate sensor name for your model
-        try:
-            sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, "jaka_torque_sensor")
-        except:
-            sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, "torque_sensor")
-        
-        adr = self.model.sensor_adr[sensor_id]
-        dim = self.model.sensor_dim[sensor_id]
-        torque = np.copy(self.data.sensordata[adr:adr + dim])
-        
-        force_torque = np.concatenate([force, torque])
-
-        ft, dft = self.lp_filter_implemented(force_torque)
-        return ft, dft
+        # Simplified force sensor reading
+        if self.robot_name == 'chin':
+            force_sensor_name = 'chin_force_sensor'
+            torque_sensor_name = 'chin_torque_sensor'
+        else: # jaka
+            force_sensor_name = 'jaka_force_sensor'
+            torque_sensor_name = 'jaka_torque_sensor'
+            
+        force = self.data.sensor(force_sensor_name).data.copy()
+        torque = self.data.sensor(torque_sensor_name).data.copy()
+        return np.hstack((force, torque)).reshape(6, 1), np.zeros((6, 1))
 
     def set_control_torque(self, tau, gripper_ctrl=None):
         self.data.ctrl[:self.model.nv] = tau
@@ -165,14 +105,22 @@ class RobotState:
 class MujocoNode(Node):
     def __init__(self):
         super().__init__('mujoco_ros2_node')
-        self.rbt = "jaka"
+        self.rbt = input("Enter the robot name: (chin/jaka)")
         # self.rbt = "chin"
-
-        if self.rbt == 'jaka':
+        if self.rbt == 'chin':
+            self.n = 6
+            self.xml_file = 'models/chin_crb7/chin_wiping_surface.xml'
+            # self.desired_position = [0.0] * self.n
+            # self.desired_position = [0, 0.327, -1.83, -0.6, -1.57, -1.57]
+            self.desired_position = [-0.25, 0.24, -1.8, -0.52, -1.57, -1.78]
+            self.k_p = [400, 400, 400, 100, 25, 25]
+            self.k_d = 2 * np.sqrt(self.k_p)
+            self.ee_name = 'chin_end_effector'
+        elif self.rbt == 'jaka':
             self.n = 6
             self.xml_file = 'models/jaka_zu12/jaka_wiping_surface.xml'
             # self.desired_position = [-0.149, 1.51, -1.73, 1.8, 1.47, 2.97]
-            self.desired_position = [-1.95, 1.3, -2.0, 2.3, 2.0, 1.15]
+            self.desired_position = [-1.95, 1.17, -2.0, 2.3, 2.0, 1.15]
             # self.desired_position = [0.0] * self.n
             self.k_p = [400, 400, 400, 50, 25, 5]
             self.k_d = [5, 5, 5, 3, 2, 1]
@@ -185,19 +133,19 @@ class MujocoNode(Node):
         self.PublishMujocoSimClock = self.create_publisher(Clock, '/clock', 10)
         self.joint_state_publisher = self.create_publisher(JointState, 'joint_states', 10)  # 发布关节状态
         # Create separate CSV files for different data
-        self.joint_csv_file = open('./log/joint_angles.csv', mode='w', newline='')
+        self.joint_csv_file = open('log/joint_angles.csv', mode='w', newline='')
         self.joint_csv_writer = csv.writer(self.joint_csv_file)
         self.joint_csv_writer.writerow(['time', 'joint_positions'])
         
         # Create CSV file for trajectory tracking data
-        self.trajectory_csv_file = open(f'./log/trajectory_tracking.csv', mode='w', newline='')
+        self.trajectory_csv_file = open(f'log/trajectory_tracking.csv', mode='w', newline='')
         self.trajectory_csv_writer = csv.writer(self.trajectory_csv_file)
         self.trajectory_csv_writer.writerow(['time', 'desired_x', 'desired_y', 'desired_z', 
                                            'actual_x', 'actual_y', 'actual_z',
                                            'error_x', 'error_y', 'error_z', 'error_norm'])
-
+        
         # Create CSV file for contact force data
-        self.force_csv_file = open(f'./log/contact_forces.csv', mode='w', newline='')
+        self.force_csv_file = open(f'log/contact_forces.csv', mode='w', newline='')
         self.force_csv_writer = csv.writer(self.force_csv_file)
         self.force_csv_writer.writerow(['time', 'fx', 'fy', 'fz', 'mx', 'my', 'mz', 
                                        'force_magnitude', 'torque_magnitude'])
@@ -207,10 +155,12 @@ class MujocoNode(Node):
         self.dt = 0.001 # Should be set from model
         
         self.task = input("Enter the task name: regulation/circle/line/sphere: ") # "regulation", "circle", "line", "sphere"
-        # self.task = "sphere"
+        
         if self.task == "sphere":
             if self.rbt == "jaka":
-                self.xml_file = 'models/jaka_zu12/jaka_wiping_sphere.xml'
+                self.xml_file = '/home/auksphere/robotics/mujoco_wrappers/models/jaka_zu12/jaka_wiping_sphere.xml'
+            elif self.rbt == "chin":
+                self.xml_file = '/home/auksphere/robotics/mujoco_wrappers/models/chin_crb7/chin_wiping_sphere.xml'
 
         self.pd_t, self.Rd_t, self.dpd_t, self.dRd_t, self.ddpd_t, self.ddRd_t = initialize_trajectory(self.task, name = self.rbt)
         self.Kp, self.KR, self.Kd, self.kp_force, self.kd_force, self.ki_force, self.zeta = set_gains("GUFIC", self.task, self.rbt)
@@ -397,7 +347,7 @@ class MujocoNode(Node):
                         error[0], error[1], error[2],  # position error
                         error_norm  # error norm
                     ])
-
+                    
                     # Record contact force data
                     Fe, d_Fe = self.robot_state.get_ee_force()
                     Fe_flat = Fe.flatten()
@@ -412,9 +362,7 @@ class MujocoNode(Node):
                         torque_magnitude  # torque magnitude
                     ])
                     
-                    
                     tau_cmd = self.geometric_unified_force_impedance_control()
-                    # tau_cmd = data.qfrc_bias[:]
                     self.robot_state.set_control_torque(tau_cmd)
                     self.robot_state.update_dynamic()
                     viewer.sync()
@@ -448,7 +396,7 @@ def main(args=None):
         mujoco_node.joint_csv_file.close()
         mujoco_node.trajectory_csv_file.close()
         mujoco_node.force_csv_file.close()
-
+        
         mujoco_node.destroy_node()
         rclpy.shutdown()
 

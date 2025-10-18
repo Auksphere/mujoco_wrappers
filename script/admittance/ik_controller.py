@@ -7,10 +7,11 @@ import numpy as np
 import sympy as sp
 import sys
 import os
+from misc_func import calculate_desired_pose_trajectory
 
 # Add project root to Python path to allow importing from 'controllers'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__))))
 # Direct import to avoid loading all controllers dependencies
 import importlib.util
 
@@ -48,14 +49,19 @@ class MujocoIKControllerNode(Node):
         self.paused = False
 
         # PD joint controller
+        self.desired_q = np.array([0.0] * self.n)
         self.desired_velocity = np.array([0.0] * self.n)
         self.feedforward_torque = np.array([0.0] * self.n)
 
         self.k_p = np.array([400, 400, 400, 50, 25, 5])
         self.k_d = np.array([50, 50, 50, 3, 2, 1])
 
+        self.max_joint_vel = np.array([2.0, 2.0, 2.0, 3.0, 3.0, 3.0])
+        self.max_joint_acc = np.array([5.0, 5.0, 5.0, 8.0, 8.0, 8.0])
+
+
         # Initialize trajectory functions and initial joint configuration
-        self.pd_t, self.Rd_t = self.calculate_desired_pose_trajectory()
+        self.pd_t, self.Rd_t, self.dpd_t, self.dRd_t, self.ddpd_t, self.ddRd_t = calculate_desired_pose_trajectory(self.task, self.duration)
         self.initial_q = self.get_initial_joint_config()
         
         # Initialize IK solver
@@ -65,63 +71,7 @@ class MujocoIKControllerNode(Node):
         self.previous_q = self.initial_q.copy()
         
         self.get_logger().info(f"MuJoCo IK Controller Node initialized with task: {self.task}")
-
-    def calculate_desired_pose_trajectory(self):
-        """
-        Defines the symbolic trajectory for the end-effector based on task type.
-        """
-        t = sp.symbols('t')
-        max_time = self.duration
-        
-        # Define default position and orientation based on task
-        if self.task == "regulation":
-            pd_default = np.array([0.0, -0.7, 0.3])
-            Rd_default = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
-            
-        elif self.task == "circle":
-            pd_default = np.array([0.0, -0.7, 0.3])
-            Rd_default = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
-            
-        elif self.task == "line":
-            pd_default = np.array([0.0, -0.7, 0.3])
-            Rd_default = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
-            
-        elif self.task == "sphere":
-            pd_default = np.array([0.0, -0.7, -0.028])  # Center of the sphere
-            Rd_default = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
-        else:
-            raise ValueError(f"Invalid task: {self.task}")
-        
-        pd_default_sym = sp.Matrix([float(x) for x in pd_default])
-        Rd_default_sym = sp.Matrix([[float(x) for x in row] for row in Rd_default])
-        
-        # Define trajectory based on task type
-        if self.task == 'regulation':
-            pd_t_sim = pd_default_sym
-            Rd_t_sim = Rd_default_sym
-            
-        elif self.task == 'circle':
-            r = 0.1
-            pd_t_sim = pd_default_sym + sp.Matrix([r * sp.cos(t), r * sp.sin(t), 0])
-            Rd_t_sim = Rd_default_sym
-            
-        elif self.task == 'line':
-            pd_t_sim = pd_default_sym + sp.Matrix([0.05 * (t - max_time / 2), 0, 0])
-            Rd_t_sim = Rd_default_sym
-            
-        elif self.task == 'sphere':
-            total_radian = np.pi / 3
-            omega_value = total_radian / max_time
-            theta = omega_value * t - total_radian * 0.5
-            r_sphere = 0.110
-            pd_t_sim = pd_default_sym + sp.Matrix([r_sphere * sp.sin(theta), 0, r_sphere * sp.cos(theta)])
-            rotmat_y = sp.Matrix([[1, 0, 0], [0, sp.cos(theta), -sp.sin(theta)], [0, sp.sin(theta), sp.cos(theta)]])
-            Rd_t_sim = Rd_default_sym @ rotmat_y
-
-        pd_t = sp.lambdify(t, pd_t_sim, "numpy")
-        Rd_t = sp.lambdify(t, Rd_t_sim, "numpy")
-
-        return pd_t, Rd_t
+    
 
     def get_initial_joint_config(self):
         """
@@ -157,7 +107,7 @@ class MujocoIKControllerNode(Node):
         
         # Initialize IK solver with higher precision
         # Since we have accurate initial position, we can use stricter tolerance
-        self.ik_solver = IKArm(solver_type='QP', tol=1e-4, ilimit=200)
+        self.ik_solver = IKArm(solver_type='QP', tol=1.5e-6, ilimit=5000)
         
         # Set initial joint positions
         data.qpos[:self.n] = self.initial_q
@@ -192,13 +142,34 @@ class MujocoIKControllerNode(Node):
                         )
                         
                         if success:
-                            position_error = q_sol - data.qpos
-                            velocity_error = self.desired_velocity - data.qvel
+                            # position_error = q_sol - data.qpos
+                            # velocity_error = self.desired_velocity - data.qvel
+
+                            # 计算期望速度(通过有限差分近似)
+                            dt = self.control_timestep
+                            desired_vel = (q_sol - self.desired_q) / dt
+                            
+                            # 限制速度变化率(加速度限制)
+                            acc = (desired_vel - self.desired_velocity) / dt
+                            acc = np.clip(acc, -self.max_joint_acc, self.max_joint_acc)
+                            desired_vel = self.desired_velocity + acc * dt
+                            
+                            # 限制最大速度
+                            desired_vel = np.clip(desired_vel, -self.max_joint_vel, self.max_joint_vel)
+                            
+                            # 平滑目标位置更新(低通滤波)
+                            alpha = 0.5  # 滤波系数 (0-1, 越小越平滑)
+                            self.desired_q = alpha * q_sol + (1 - alpha) * self.desired_q
+                            
+                            # 计算PD控制律
+                            position_error = self.desired_q - data.qpos[:self.n]
+                            velocity_error = desired_vel - data.qvel[:self.n]
                     
                             pd_torques = self.k_p * position_error + self.k_d * velocity_error
 
                             # Set control commands to desired joint angles
-                            data.ctrl[:self.n] = pd_torques + self.feedforward_torque
+                            # data.ctrl[:self.n] = pd_torques + self.feedforward_torque
+                            data.ctrl[:] = q_sol
                             self.previous_q = q_sol.copy()
                         else:
                             # If IK fails, use previous solution
@@ -238,7 +209,7 @@ def main(args=None):
     rclpy.init(args=args)
     
     #change the task here: 'regulation', 'circle', 'line', 'sphere'
-    task = 'circle'
+    task = 'sphere'
     
     # Allow task to be specified via command line argument
     if args and len(args) > 0:

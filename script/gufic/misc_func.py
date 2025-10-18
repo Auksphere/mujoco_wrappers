@@ -72,15 +72,13 @@ def initialize_trajectory(task, max_time = 10, name = "jaka"):
                                 [0, 0, -1]])
             
         elif task == "circle":
-            #pd_default = np.array([0.0, -0.7, 0.05])
-            pd_default = np.array([0.0, -0.7, 0.3])
+            pd_default = np.array([0.0, -0.7, 0.05])
             Rd_default = np.array([[0, 1, 0],
                                 [1, 0, 0],
                                 [0, 0, -1]])
             
         elif task == "line":
-            #pd_default = np.array([0.0, -0.7, 0.215-0.17])
-            pd_default = np.array([0.0, -0.7, 0.3])
+            pd_default = np.array([0.0, -0.7, 0.215-0.17])
             Rd_default = np.array([[0, 1, 0],
                                 [1, 0, 0],
                                 [0, 0, -1]])
@@ -147,13 +145,13 @@ def initialize_trajectory(task, max_time = 10, name = "jaka"):
                                 [0, 0, 1]])
             
         elif task == "circle":
-            pd_default = np.array([0.6, 0.0, 0.215])
+            pd_default = np.array([0.6, 0.0, 0.05])
             Rd_default = np.array([[1, 0, 0],
                                 [0, 1, 0],
                                 [0, 0, 1]])
             
         elif task == "line":
-            pd_default = np.array([0.6, 0.0, 0.215])
+            pd_default = np.array([0.6, 0.0, 0.215-0.17])
             Rd_default = np.array([[1, 0, 0],
                                 [0, 1, 0],
                                 [0, 0, 1]])
@@ -261,9 +259,9 @@ def set_gains(controller = "GUFIC", task = "regulation", name = "jaka"):
                 # kp_force = 1.0
                 # kd_force = 0.5
                 # ki_force = 4.0
-                kp_force = 1.5  
-                kd_force = 4.0
-                ki_force = -1.0
+                kp_force = 2.0  
+                kd_force = 0.5
+                ki_force = -1.03
 
         zeta = 5.0
         
