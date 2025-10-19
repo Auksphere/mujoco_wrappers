@@ -172,3 +172,4 @@ MUJOCO_LOG.TXT
 _METADATA
 checkpoint
 wandb/
+plots*/

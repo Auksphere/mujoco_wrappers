@@ -87,8 +87,8 @@ class ChinMujocoNode(Node):
                     velocity_error = self.desired_velocity - data.qvel
                     
                     pd_torques = self.k_p * position_error + self.k_d * velocity_error
-                    data.ctrl[:] = pd_torques + self.feedforward_torque
-                    # data.ctrl[:] = self.desired_position  # 似乎使用这个效果是一样的, 因为actuator本身就是一个pd控制器
+                    # data.ctrl[:] = pd_torques + self.feedforward_torque
+                    data.ctrl[:] = self.desired_position  # 似乎使用这个效果是一样的, 因为actuator本身就是一个pd控制器
                     # 公式为: torque = gainprm * data.ctrl + biasprm[0] + biasprm[1] * qpos + biasprm[2] * qvel
 
                 self.csv_writer.writerow([step_start, list(self.desired_position), list(data.qpos)])

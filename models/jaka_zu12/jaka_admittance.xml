@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="JAKA_Enhanced_Scene">
+
+    <statistic extent="2" meansize=".05"/>
+    <compiler angle="radian" inertiafromgeom="false" coordinate="local" eulerseq="xyz" meshdir="assets" autolimits="true"/>
+    <size njmax="5000" nconmax="250"/>
+    <option timestep="0.001" gravity="0 0 -9.81" jacobian="sparse" iterations="300" solver="Newton" tolerance="1e-10" cone="pyramidal"/>
+
+    <visual>
+        <map force="0.1" zfar="30"/>
+        <headlight diffuse="0.5 0.5 0.5" ambient="0.5 0.45 0.4" specular="1 1 1"/>
+        <rgba haze="0.15 0.25 0.35 1"/>
+        <quality shadowsize="8192"/>
+        <global offwidth="400" offheight="400"/>
+        <scale framelength="0.1" framewidth="0.01" com="0.01"/>
+    </visual>
+
+    <default>
+        <default class="jaka">
+            <joint axis="0 1 0" range="-6.28319 6.28319" armature="0.1" damping="1" limited="true"/>
+            <position ctrlrange="-6.2831 6.2831"/>
+            <general biastype="affine" ctrlrange="-6.2831 6.2831" gainprm="5000" biasprm="0 -5000 -500"/>
+            <geom contype='1' conaffinity='1' condim='6' margin="0.002" solref=".02 1" solimp=".95 .95 .001" friction="0.3"/>
+        </default>
+    </default>
+
+    <asset>
+        <!-- JAKA Robot Meshes -->
+        <mesh name="link0" file="base_link.STL"/>
+        <mesh name="link1" file="1.STL"/>
+        <mesh name="link2" file="2.STL"/>
+        <mesh name="link3" file="3.STL"/>
+        <mesh name="link4" file="4.STL"/>
+        <mesh name="link5" file="5.STL"/>
+        <mesh name="link6" file="6.STL"/>
+        <mesh name="EDEFF" file="EDEFF.STL"/>
+
+        <!-- Textures and Materials -->
+        <texture type="skybox" builtin="gradient" rgb1="0.53 0.81 0.92" rgb2="1 1 1" width="512" height="512"/>
+        <texture name="texplane" type="2d" builtin="checker" rgb1=".05 .05 .05" rgb2=".05 .05 .05" width="512" height="512" mark="cross" markrgb=".1 .1 .1"/>
+        <material name="matplane" reflectance="0.25" texture="texplane" texrepeat="1 1" texuniform="true"/>
+        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+        <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="2 2" reflectance="0.15"/>
+        
+        <!-- Force Sensor Materials -->
+        <material name="force_sensor_housing" rgba="0.7 0.7 0.8 1" specular="0.3" shininess="0.1" reflectance="0.1"/>
+        <material name="force_sensor_hub" rgba="0.5 0.5 0.6 1" specular="0.5" shininess="0.3" reflectance="0.2"/>
+    </asset>
+
+    <worldbody>
+        <!-- Floor -->
+        <geom name="floor" pos="0 0 0.0" size="0 0 1" type="plane" material="groundplane" condim="6" contype="1"/>
+        
+        <!-- Lighting -->
+        <light directional="true" diffuse=".8 .8 .8" specular=".2 .2 .2" pos="0 0 5" dir="1.5 1.0 -2"/>
+
+        <!-- JAKA Robot -->
+        <body name="jaka_base" pos="0 0 0.05" childclass="jaka">
+            <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="0.584 0.584 0.584 1" mesh="link0"/>
+            <geom type="mesh" rgba="0.584 0.584 0.584 1" mesh="link0"/>
+            
+            <body name="jaka_link1" pos="0 0 0.10765">
+                <inertial pos="-0.000328432 0.0040609 -0.0250109" quat="0.494863 -0.0216305 0.0243938 0.868359" mass="3.78" diaginertia="0.0405059 0.0403714 0.0342898"/>
+                <joint name="jaka_joint1" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28" armature="4" frictionloss="0"/>
+                <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link1"/>
+                
+                <body name="jaka_link2" quat="0.707105 0.707108 0 0">
+                    <inertial pos="0.2975 -1.25165e-08 -0.16607" quat="0.499974 0.499521 0.500477 0.500027" mass="12.44" diaginertia="1.66881 1.65303 0.116455"/>
+                    <joint name="jaka_joint2" pos="0 0 0" axis="0 0 1" limited="true" range="-1.48 4.62" armature="4" frictionloss="0"/>
+                    <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link2"/>
+                    
+                    <body name="jaka_link3" pos="0.595 0 0">
+                        <inertial pos="0.294234 -4.72319e-06 -0.0241861" quat="-0.00022526 0.704551 -0.000206596 0.709653" mass="5.06" diaginertia="0.498538 0.497634 0.021265"/>
+                        <joint name="jaka_joint3" pos="0 0 0" axis="0 0 1" limited="true" range="-3.05 3.05" armature="1" frictionloss="0"/>
+                        <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link3"/>
+                        
+                        <body name="jaka_link4" pos="0.5715 0 -0.1315">
+                            <inertial pos="4.22018e-06 -0.0150344 0.00216594" quat="0.677782 0.701328 0.159558 -0.152616" mass="0.883" diaginertia="0.00459197 0.0045525 0.00363768"/>
+                            <joint name="jaka_joint4" pos="0 0 0" axis="0 0 1" limited="true" range="-1.48 4.62" armature="1" frictionloss="0"/>
+                            <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link4"/>
+                            
+                            <body name="jaka_link5" pos="0 -0.115 0" quat="0.707105 0.707108 0 0">
+                                <inertial pos="3.86595e-06 0.0042653 -0.00184283" quat="0.695151 0.688192 -0.146515 0.147274" mass="1" diaginertia="0.0070303 0.00698932 0.00413442"/>
+                                <joint name="jaka_joint5" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28" armature="0.8" frictionloss="0"/>
+                                <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link5"/>
+                                
+                                <body name="jaka_link6" pos="0 0.1035 0" quat="0.707105 -0.707108 0 0">
+                                    <inertial pos="-0.000786085 3.88801e-05 -0.0163247" quat="-0.134296 0.689453 0.135461 0.698763" mass="0.22" diaginertia="0.00106472 0.000657738 0.000588131"/>
+                                    <joint name="jaka_joint6" pos="0 0 0" axis="0 0 1" limited="true" range="-6.28 6.28" armature="0.8" frictionloss="0"/>
+                                    <geom type="mesh" rgba="0.737 0.737 0.768 1" mesh="link6"/>
+
+                                    <!-- End Effector Assembly -->
+                                    <body name="jaka_end_effector_mount" pos="0.0 0.0 0.0" euler="0 0 0">
+                                        <inertial pos="0 0 0.02" mass="0.1" diaginertia="0.001 0.001 0.001"/>
+                                        
+                                        <!-- SUNRISE INSTRUMENTS D950M F250N Force/Torque Sensor -->
+                                        <!-- Based on M4313M4E specifications: 250N force, 24Nm torque capacity -->
+                                        <body name="jaka_force_sensor_body" pos="0.0 0.0 0.015" euler="0 0 0">
+                                            <!-- Sensor housing geometry based on actual dimensions -->
+                                            <geom name="force_sensor_housing" type="cylinder" size="0.0475 0.01425" rgba="0.7 0.7 0.8 1" 
+                                                  friction="0.3" contype='1' conaffinity='1' condim='6' 
+                                                  solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                            <!-- Sensor center hub -->
+                                            <geom name="force_sensor_hub" type="cylinder" size="0.01574 0.003" pos="0 0 -0.01725" rgba="0.5 0.5 0.6 1" 
+                                                  friction="0.3" contype='1' conaffinity='1' condim='6' 
+                                                  solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                            <!-- Actual sensor mass: 0.36kg -->
+                                            <inertial pos="0 0 0" mass="0.36" diaginertia="0.0008 0.0008 0.0004"/>
+                                            
+                                            <geom name="force_sensor_adaptor" type="cylinder" size="0.0375 0.00575" pos="0 0 0.02" rgba="0.5 0.5 0.6 1" 
+                                                  friction="0.3" contype='1' conaffinity='1' condim='6' 
+                                                  solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+
+                                            <!-- Force sensor measurement site -->
+                                            <site name="jaka_force_sensor_site" type="sphere" size="0.002" pos="0.0 0 0.0115" euler="0 0 0" rgba="0 1 0 0.8"/>
+                                            
+                                            <!-- End Effector using EDEFF STL mesh -->
+                                            <body name="jaka_end_effector_body" pos="-0.054 0.054 0.08" euler="3.1415926 0 0">
+                                                <!-- End effector visual and collision geometry using STL file -->
+                                                <geom name="end_effector_visual" type="mesh" mesh="EDEFF" 
+                                                    rgba="0.2 0.2 0.2 1" contype="0" conaffinity="0" group="1"/>
+                                                <geom name="end_effector_collision" type="mesh" mesh="EDEFF" 
+                                                    rgba="0.2 0.2 0.2 1" friction="0.8" contype='1' conaffinity='1' condim='6' 
+                                                    solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+                                                <!-- End effector inertial properties (from CAD) -->
+                                                <inertial pos="0 0 -0.00449" mass="0.06104" diaginertia="4.6157e-5 4.6325e-5 6.5702e-5"/>
+
+                                                <!-- Pencil in the center hole -->
+                                                <body name="pencil" pos="0.054 0.054 -0.02" euler="0 0 0">
+                                                    <!-- Pencil body -->
+                                                    <geom name="pencil_body" type="cylinder" size="0.003 0.04" pos="0 0 0.015" rgba="0 0.3 0 1"/>
+                                                 
+                                                    <!-- Inertial -->
+                                                    <inertial pos="0 0 0.04" mass="0.01" diaginertia="1e-6 1e-6 2e-6"/>
+                                                </body>
+                                            </body>
+                                        </body>
+                                        
+                                        <!-- End Effector Site -->
+                                        <site name="jaka_end_effector" type="sphere" size="0.003" pos="0.0 0 0.14" euler="0 0 0" rgba="0 0 0 1.0"/>
+                                        
+                                        <!-- End Effector Body at same location as site for IK -->
+                                        <body name="attachment" pos="0.0 0 0.14" euler="0 0 0">
+                                            <inertial pos="0 0 0" mass="0.001" diaginertia="1e-8 1e-8 1e-8"/>
+                                            <geom name="attachment_marker" type="sphere" size="0.002" rgba="1 0 0 0.5" contype="0" conaffinity="0"/>
+                                        </body>
+                                    </body>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body>
+            </body>
+        </body>
+
+        <!-- Work Platform -->
+        <body name="hole" pos="0.0 -0.7 -0.028">
+            <geom name='hole_base_geom' type="sphere" size="0.1" pos="0.0 0.0 0.0" rgba="0.3 0.3 0.3 1" friction="0.3" contype='1' conaffinity='1' condim='6' solimp="0.99 0.99 0.001" solref="0.001 1" margin="0.002"/>
+        </body>
+
+
+    </worldbody>
+
+    
+    <actuator>
+        <general class="jaka" name="jaka_joint1_actuator" joint="jaka_joint1" gainprm="4500" biasprm="0 -4500 -450" forcerange="-330 330" ctrlrange="-6.28 6.28"/>
+        <general class="jaka" name="jaka_joint2_actuator" joint="jaka_joint2" gainprm="4500" biasprm="0 -4500 -450" forcerange="-330 330" ctrlrange="-1.48 4.62"/>
+        <general class="jaka" name="jaka_joint3_actuator" joint="jaka_joint3" gainprm="3500" biasprm="0 -3500 -350" forcerange="-150 150" ctrlrange="-3.05 3.05"/>
+        <general class="jaka" name="jaka_joint4_actuator" joint="jaka_joint4" gainprm="3500" biasprm="0 -3500 -350" forcerange="-56 56" ctrlrange="-1.48 4.62"/>
+        <general class="jaka" name="jaka_joint5_actuator" joint="jaka_joint5" gainprm="2000" biasprm="0 -2000 -200" forcerange="-56 56" ctrlrange="-6.28 6.28"/>
+        <general class="jaka" name="jaka_joint6_actuator" joint="jaka_joint6" gainprm="2000" biasprm="0 -2000 -200" forcerange="-56 56" ctrlrange="-6.28 6.28"/>
+    </actuator>
+
+    <sensor>
+        <!-- End Effector Position -->
+        <framepos objtype="site" objname="jaka_end_effector"/>
+        
+        <!-- SUNRISE INSTRUMENTS D950M F250N Force/Torque Sensor -->
+        <!-- Based on M4313M4E specifications -->
+        
+        <!-- Force Sensors (Capacity: 250N each axis, Resolution: 0.0367N) -->
+        <force name="jaka_force_sensor_fx" site="jaka_force_sensor_site" noise="0.0367"/>
+        <force name="jaka_force_sensor_fy" site="jaka_force_sensor_site" noise="0.0367"/>
+        <force name="jaka_force_sensor_fz" site="jaka_force_sensor_site" noise="0.0367"/>
+        
+        <!-- Torque Sensors (Capacity: 24Nm each axis, Resolution: 0.001Nm) -->
+        <torque name="jaka_torque_sensor_mx" site="jaka_force_sensor_site" noise="0.001"/>
+        <torque name="jaka_torque_sensor_my" site="jaka_force_sensor_site" noise="0.001"/>
+        <torque name="jaka_torque_sensor_mz" site="jaka_force_sensor_site" noise="0.001"/>
+        
+        <!-- Legacy force/torque sensors for compatibility -->
+        <force name="jaka_force_sensor" site="jaka_end_effector"/>
+        <torque name="jaka_torque_sensor" site="jaka_end_effector"/>
+        
+        <!-- Joint Position Sensors -->
+        <jointpos name="jaka_joint1_pos" joint="jaka_joint1"/>
+        <jointpos name="jaka_joint2_pos" joint="jaka_joint2"/>
+        <jointpos name="jaka_joint3_pos" joint="jaka_joint3"/>
+        <jointpos name="jaka_joint4_pos" joint="jaka_joint4"/>
+        <jointpos name="jaka_joint5_pos" joint="jaka_joint5"/>
+        <jointpos name="jaka_joint6_pos" joint="jaka_joint6"/>
+        
+        <!-- Gripper Position Sensors
+        <jointpos name="jaka_finger1_pos" joint="jaka_finger1_joint"/>
+        <jointpos name="jaka_finger2_pos" joint="jaka_finger2_joint"/> -->
+    </sensor>
+
+</mujoco>

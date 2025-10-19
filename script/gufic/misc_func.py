@@ -91,8 +91,8 @@ def initialize_trajectory(task, max_time = 10, name = "jaka"):
         else:
             raise ValueError("Invalid task")
 
-        pd_default_sym = sp.Matrix(pd_default)
-        Rd_default_sym = sp.Matrix(Rd_default)
+        pd_default_sym = sp.Matrix([float(x) for x in pd_default])
+        Rd_default_sym = sp.Matrix([[float(x) for x in row] for row in Rd_default])
 
         if task == 'regulation':
             pd_t_sim = pd_default_sym
@@ -110,13 +110,11 @@ def initialize_trajectory(task, max_time = 10, name = "jaka"):
 
             total_radian = np.pi/3
             omega_value = total_radian / max_time
-
             theta = omega_value * t - total_radian * 0.5
-
 
             # r_sphere = 0.304
             # r_sphere = 0.286
-            r_sphere = 0.088
+            r_sphere = 0.100
             pd_t_sim = pd_default_sym + sp.Matrix([r_sphere * sp.sin(theta), 0, r_sphere * sp.cos(theta)])
             # rotmat_y = sp.Matrix([[sp.cos(-theta), 0, sp.sin(-theta)], [0, 1, 0], [-sp.sin(-theta), 0, sp.cos(-theta)]])
             rotmat_y = sp.Matrix([[1, 0, 0], [0, sp.cos(theta), -sp.sin(theta)], [0, sp.sin(theta), sp.cos(theta)]])
@@ -147,13 +145,13 @@ def initialize_trajectory(task, max_time = 10, name = "jaka"):
                                 [0, 0, 1]])
             
         elif task == "circle":
-            pd_default = np.array([0.6, 0.0, 0.215])
+            pd_default = np.array([0.6, 0.0, 0.05])
             Rd_default = np.array([[1, 0, 0],
                                 [0, 1, 0],
                                 [0, 0, 1]])
             
         elif task == "line":
-            pd_default = np.array([0.6, 0.0, 0.215])
+            pd_default = np.array([0.6, 0.0, 0.215-0.17])
             Rd_default = np.array([[1, 0, 0],
                                 [0, 1, 0],
                                 [0, 0, 1]])
@@ -166,8 +164,8 @@ def initialize_trajectory(task, max_time = 10, name = "jaka"):
         else:
             raise ValueError("Invalid task")
 
-        pd_default_sym = sp.Matrix(pd_default)
-        Rd_default_sym = sp.Matrix(Rd_default)
+        pd_default_sym = sp.Matrix([float(x) for x in pd_default])
+        Rd_default_sym = sp.Matrix([[float(x) for x in row] for row in Rd_default])
 
         if task == 'regulation':
             pd_t_sim = pd_default_sym
@@ -250,9 +248,9 @@ def set_gains(controller = "GUFIC", task = "regulation", name = "jaka"):
             Kd = np.eye(6) * np.array([500, 500, 500, 500, 500, 500])
 
             if task == "sphere":
-                kp_force = 1.0
+                kp_force = 2.0
                 kd_force = 0.5
-                ki_force = 0.6
+                ki_force = -1.03
                 # kp_force = 0.0  
                 # kd_force = 0.0
                 # ki_force = 0.0
@@ -261,9 +259,9 @@ def set_gains(controller = "GUFIC", task = "regulation", name = "jaka"):
                 # kp_force = 1.0
                 # kd_force = 0.5
                 # ki_force = 4.0
-                kp_force = 1.5  
-                kd_force = 4.0
-                ki_force = -1.0
+                kp_force = 2.0  
+                kd_force = 0.5
+                ki_force = -1.03
 
         zeta = 5.0
         
