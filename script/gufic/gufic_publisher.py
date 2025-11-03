@@ -34,7 +34,7 @@ class RobotState:
         self.ee_name = ee_name
         self.robot_name = robot_name
         self.site_id = self.model.site(ee_name).id
-        self.robot_name == 'jaka'
+        self.robot_name = 'jaka'
         self.ee_body_id = self.model.body('jaka_end_effector_mount').id
             
         self.Jp = np.zeros((3, self.model.nv))

@@ -233,11 +233,6 @@ def set_gains(controller = "GUFIC", task = "regulation", name = "jaka"):
             Kp = np.eye(3) * np.array([1500, 1500, 10])
             KR = np.eye(3) * np.array([1500, 1500, 1500])
             Kd = np.eye(6) * np.array([500, 500, 500, 500, 500, 500])
-
-            # PID gains for the force tracking controller
-            # kp_force = 1.0
-            # kd_force = 0.5
-            # ki_force = 4.0
             kp_force = 0.0  
             kd_force = 0.0
             ki_force = 0.0
@@ -251,14 +246,8 @@ def set_gains(controller = "GUFIC", task = "regulation", name = "jaka"):
                 kp_force = 2.0
                 kd_force = 0.5
                 ki_force = -1.03
-                # kp_force = 0.0  
-                # kd_force = 0.0
-                # ki_force = 0.0
 
             else:
-                # kp_force = 1.0
-                # kd_force = 0.5
-                # ki_force = 4.0
                 kp_force = 2.0  
                 kd_force = 0.5
                 ki_force = -1.03
