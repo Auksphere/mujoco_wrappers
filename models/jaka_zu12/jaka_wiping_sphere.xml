@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<mujoco model="JAKA_Enhanced_Scene">
+<mujoco model="jaka_wiping_scene">
 
     <statistic extent="2" meansize=".05"/>
     <compiler angle="radian" inertiafromgeom="false" coordinate="local" eulerseq="xyz" meshdir="assets" autolimits="true"/>
