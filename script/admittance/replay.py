@@ -11,7 +11,8 @@ class MujocoPlaybackNode(Node):
         super().__init__('mujoco_playback_node')
         self.n = 6
         self.xml_file = 'models/jaka_zu12/jaka_admittance.xml'
-        self.trajectory_csv_file = 'log/ik_trajectory.csv'
+
+        self.trajectory_csv_file = 'log/trajectory_sphere.csv'
         
         self.paused = False
         self.trajectory = self.load_trajectory()
@@ -21,10 +22,21 @@ class MujocoPlaybackNode(Node):
         trajectory = []
         with open(self.trajectory_csv_file, mode='r') as csv_file:
             csv_reader = csv.reader(csv_file)
-            next(csv_reader) # Skip header
+            header = next(csv_reader)  # Skip header and get column names
+            
+            # Find joint column indices (joint_1 to joint_6)
+            joint_indices = []
+            for i, col_name in enumerate(header):
+                if col_name.startswith('joint_'):
+                    joint_indices.append(i)
+            
+            self.get_logger().info(f"Found joint columns at indices: {joint_indices}")
+            
             for row in csv_reader:
-                # row[0] is time, row[1:] are joint angles
-                trajectory.append([float(val) for val in row[1:]])
+                # Extract only joint angles (last 6 columns)
+                joint_angles = [float(row[i]) for i in joint_indices]
+                trajectory.append(joint_angles)
+                
         self.get_logger().info(f"Loaded {len(trajectory)} points from {self.trajectory_csv_file}")
         return trajectory
 
@@ -40,8 +52,13 @@ class MujocoPlaybackNode(Node):
         # Set initial joint positions from the first point in the trajectory
         initial_qpos = self.trajectory[0]
         data.qpos[:self.n] = initial_qpos
+        mujoco.mj_forward(model, data)  # Forward kinematics to update positions
         
         traj_index = 0
+        start_time = time.time()
+        
+        self.get_logger().info(f"Starting trajectory playback with {len(self.trajectory)} points")
+        self.get_logger().info("Controls: Space = Pause/Resume")
         
         with mujoco.viewer.launch_passive(model, data, key_callback=self.key_callback) as viewer:
             while viewer.is_running() and traj_index < len(self.trajectory):
@@ -55,6 +72,12 @@ class MujocoPlaybackNode(Node):
                     mujoco.mj_step(model, data)
                     viewer.sync()
                     traj_index += 1
+                    
+                    # Progress reporting every 100 steps
+                    if traj_index % 100 == 0:
+                        progress = (traj_index / len(self.trajectory)) * 100
+                        elapsed = time.time() - start_time
+                        self.get_logger().info(f"Replay progress: {progress:.1f}% ({traj_index}/{len(self.trajectory)})")
 
                 # Maintain simulation frequency
                 time_until_next_step = model.opt.timestep - (time.time() - step_start)
@@ -63,7 +86,6 @@ class MujocoPlaybackNode(Node):
 
                 rclpy.spin_once(self, timeout_sec=0.0)
             
-            self.get_logger().info("Trajectory playback finished.")
 
     def key_callback(self, keycode):
         """Pauses or unpauses the simulation when the space key is pressed."""

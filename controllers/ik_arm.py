@@ -446,3 +446,42 @@ class IKArm:
             # print("Failed result_IK: ", result_IK)
             return self.q0, result_IK[1], result_IK[2], result_IK[3], result_IK[4], result_IK[5]
         return result_IK
+    
+    def solve_ik_from_snapshot(self, model: mujoco.MjModel, Tep: np.ndarray, q0: np.ndarray, jacobian: np.ndarray):
+        """
+        Solve IK using precomputed jacobian from robot state snapshot.
+        This avoids accessing MuJoCo data in worker threads.
+        
+        Args:
+            model: MuJoCo model (for joint limits, etc.)
+            Tep: Target end-effector pose (4x4 matrix)
+            q0: Initial joint configuration
+            jacobian: Precomputed 6xN jacobian matrix
+            
+        Returns:
+            tuple: (q_solution, success, iterations, error, jl_valid, solve_time)
+        """
+        # For now, use the existing solver but create a temporary data structure
+        # A proper implementation would use the jacobian directly in the solver
+        start_time = time.time()
+        
+        try:
+            # Create a temporary data copy with the current joint state
+            temp_data = mujoco.MjData(model)
+            temp_data.qpos[:len(q0)] = q0
+            mujoco.mj_forward(model, temp_data)
+            
+            # Use the existing solver
+            result_IK = self.solver.solve(model, temp_data, Tep, q0)
+            solve_time = time.time() - start_time
+            
+            if not result_IK[1]:
+                return q0.copy(), result_IK[1], result_IK[2], result_IK[3], result_IK[4], solve_time
+            
+            # Return with solve time
+            return result_IK[0], result_IK[1], result_IK[2], result_IK[3], result_IK[4], solve_time
+            
+        except Exception as e:
+            solve_time = time.time() - start_time
+            print(f"IK solver error: {e}")
+            return q0.copy(), False, 0, float('inf'), False, solve_time

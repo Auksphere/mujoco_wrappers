@@ -6,6 +6,7 @@ import mujoco.viewer
 import time
 from sensor_msgs.msg import JointState
 from rosgraph_msgs.msg import Clock
+from builtin_interfaces.msg import Time
 import numpy as np
 import csv
 import os
@@ -172,7 +173,9 @@ class MujocoNode(Node):
             self.n = 6
             self.xml_file = 'models/jaka_zu12/jaka_wiping_surface.xml'
             # self.desired_position = [-0.149, 1.51, -1.73, 1.8, 1.47, 2.97]
-            self.desired_position = [-1.95, 1.3, -2.0, 2.3, 2.0, 1.15]
+            # self.desired_position = [-1.95, 1.3, -2.0, 2.3, 2.0, 1.15]
+            self.desired_position = [-1.9953613783, 1.2212620712, -2.0331956982, 
+                                    2.1375685376, 2.0386397961, 1.0805070204]
             # self.desired_position = [0.0] * self.n
             self.k_p = [400, 400, 400, 50, 25, 5]
             self.k_d = [5, 5, 5, 3, 2, 1]
@@ -425,6 +428,15 @@ class MujocoNode(Node):
                 joint_state_msg.position = [data.qpos[i] for i in range(self.n)]
                 self.joint_state_publisher.publish(joint_state_msg)
                 self.joint_csv_writer.writerow([self.iter * self.dt, joint_state_msg.position])
+
+                # publish simulation clock
+                clock_msg = Clock()
+                t_msg = Time()
+                current_sim_time = self.iter * self.dt
+                t_msg.sec = int(current_sim_time)
+                t_msg.nanosec = int((current_sim_time - int(current_sim_time)) * 1e9)
+                clock_msg.clock = t_msg
+                self.PublishMujocoSimClock.publish(clock_msg)
 
                 time_until_next_step = model.opt.timestep - (time.time() - step_start)
                 if time_until_next_step > 0:
