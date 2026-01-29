@@ -16,8 +16,6 @@ Architecture:
 This completely decouples computation from execution, preventing simulation stalls.
 """
 
-import rclpy
-from rclpy.node import Node
 import mujoco
 import mujoco.viewer
 import time
@@ -35,9 +33,6 @@ from filter import ButterLowPass
 from scipy.linalg import block_diag, expm
 from scipy.spatial.transform import Rotation as ScipyRotation
 from scipy.spatial.transform import Slerp
-from sensor_msgs.msg import JointState
-from rosgraph_msgs.msg import Clock
-from builtin_interfaces.msg import Time
 
 # Add project root to Python path to allow importing from 'controllers'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -284,18 +279,14 @@ class RobotState:
         ft, dft = self.lp_filter_implemented(force_torque)
         return ft, dft
 
-class MujocoNode(Node):
-    def __init__(self, task='sphere'):
-        super().__init__('mujoco_controller_node')
+class MujocoSimulator:
+    def __init__(self, task='pih'):
         self.n = 6
-        self.xml_file = 'models/jaka_zu12/jaka_admittance.xml'
+        self.xml_file = 'models/jaka_zu12/jaka_pih.xml'
         self.task = task
         
-        # Trajectory parameters
-        if task == 'circle':
-            self.duration = 30.0
-        else:
-            self.duration = 10.0
+
+        self.duration = 10.0
             
         # Frequency settings
         self.policy_frequency = 25.0  # Policy (IK computation): 25Hz
@@ -347,10 +338,6 @@ class MujocoNode(Node):
         self.pd_t, self.Rd_t, self.dpd_t, self.dRd_t, self.ddpd_t, self.ddRd_t = calculate_desired_pose_trajectory(self.task, self.duration)
         self.initial_q = self.get_initial_joint_config()
         
-        # ROS2 publishers
-        self.PublishMujocoSimClock = self.create_publisher(Clock, '/clock', 10)
-        self.joint_state_publisher = self.create_publisher(JointState, 'joint_states', 10)
-        
         # Shared references for thread access
         self.model = None
         self.data = None
@@ -361,14 +348,10 @@ class MujocoNode(Node):
     def get_initial_joint_config(self):
         """Get pre-computed initial joint configuration for each task"""
         initial_configs = {
-            'sphere': np.array([-1.9953613783, 1.2212620712, -2.0331956982, 
-                                    2.1375685376, 2.0386397961, 1.0805070204]),
+            'pih': np.array([-1.75918268, 1.21076793, -2.08981473, 
+                             2.43548937, 1.57080299, 1.38246615]),
             'regulation': np.array([-1.7671236707, 1.5031112517, -1.8753320848, 
                                     1.9429508990, 1.5703766827, 1.3875707847]),
-            'circle': np.array([-1.6226059033, 1.4895827403, -1.8643317331, 
-                                1.9405617237, 1.5719018365, 1.5311060553]),
-            'line': np.array([-2.0984495472, 1.4330101841, -1.7939865607, 
-                              1.9359154117, 1.5725287978, 1.0554072454])
         }
         return initial_configs.get(self.task, np.array([0.0, np.pi/2, 0.0, np.pi/2, 0.0, 0.0]))
 
@@ -535,6 +518,19 @@ class MujocoNode(Node):
                 time.sleep(sleep_time)
                 
         self.get_logger().info("Controller thread stopped")
+    
+    def get_logger(self):
+        """Simple logger for compatibility"""
+        class SimpleLogger:
+            def info(self, msg):
+                print(f"[INFO] {msg}")
+            def warn(self, msg):
+                print(f"[WARN] {msg}")
+            def error(self, msg):
+                print(f"[ERROR] {msg}")
+            def debug(self, msg):
+                pass  # Skip debug messages
+        return SimpleLogger()
 
     def update_admittance_dynamics(self, Fe, dt):
         """Update admittance dynamics"""
@@ -691,27 +687,11 @@ class MujocoNode(Node):
                         except Exception as e:
                             self.get_logger().error(f"Snapshot creation error: {e}")
                 
-                # Publish ROS messages
-                joint_state_msg = JointState()
-                joint_state_msg.position = [self.data.qpos[i] for i in range(self.n)]
-                self.joint_state_publisher.publish(joint_state_msg)
-
-                clock_msg = Clock()
-                t_msg = Time()
-                with self.time_lock:
-                    current_time_local = self.current_time
-                t_msg.sec = int(current_time_local)
-                t_msg.nanosec = int((current_time_local - int(current_time_local)) * 1e9)
-                clock_msg.clock = t_msg
-                self.PublishMujocoSimClock.publish(clock_msg)
-
                 # Maintain simulation frequency
                 elapsed = time.time() - step_start
                 sleep_time = max(0, self.model.opt.timestep - elapsed)
                 if sleep_time > 0:
                     time.sleep(sleep_time)
-
-                rclpy.spin_once(self, timeout_sec=0.0)
             
         # Clean shutdown
         self.get_logger().info("Simulation finished, stopping threads...")
@@ -770,31 +750,33 @@ class MujocoNode(Node):
             with self.time_lock:
                 current_time = self.current_time
             self.get_logger().info(f"Simulation {status} at t={current_time:.3f}s")
+            
+            # print when paused
+            if self.paused and hasattr(self, 'data') and self.data is not None:
+                current_joint_positions = self.data.qpos[:self.n].copy()
+                self.get_logger().info(f"Current joint positions: {current_joint_positions}")
 
 
 def main(args=None):
-    rclpy.init(args=args)
-    
-    task = input("Enter task name ('regulation', 'circle', 'line', 'sphere'): ")
+    task = 'sphere'  # Default task
     
     if args and len(args) > 0:
         task = args[0]
+    else:
+        task = input("Enter task name ('regulation', 'pih'): ")
     
-    controller_node = MujocoNode(task=task)
+    simulator = MujocoSimulator(task=task)
     
     print(f"\nAsynchronous Control Architecture:")
-    print(f"- Policy (IK): {controller_node.policy_frequency} Hz")
-    print(f"- Controller: {controller_node.controller_frequency} Hz") 
+    print(f"- Policy (IK): {simulator.policy_frequency} Hz")
+    print(f"- Controller: {simulator.controller_frequency} Hz") 
     print("- Simulation: Continuous, non-blocking")
     print("\nControls: Space = Pause/Resume")
 
     try:
-        controller_node.MujocoSim()
+        simulator.MujocoSim()
     except KeyboardInterrupt:
         pass
-    finally:
-        controller_node.destroy_node()
-        rclpy.shutdown()
 
 
 if __name__ == '__main__':

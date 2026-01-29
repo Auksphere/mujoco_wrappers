@@ -156,18 +156,12 @@
     </worldbody>
 
     <actuator>
-        <!-- JAKA Joint Actuators -->
-        <motor name="jaka_joint1_actuator" joint="jaka_joint1" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-330 330"/>
-        <motor name="jaka_joint2_actuator" joint="jaka_joint2" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-330 330"/>
-        <motor name="jaka_joint3_actuator" joint="jaka_joint3" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-150 150"/>
-        <motor name="jaka_joint4_actuator" joint="jaka_joint4" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-56 56"/>
-        <motor name="jaka_joint5_actuator" joint="jaka_joint5" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-56 56"/>
-        <motor name="jaka_joint6_actuator" joint="jaka_joint6" gear="1 0 0 0 0 0" ctrllimited="false" ctrlrange="-1e6 1e6" forcerange="-56 56"/>
-        
-        
-        <!-- Gripper Actuators -->
-        <!-- <position ctrllimited="true" ctrlrange="-0.04 0" joint="jaka_finger1_joint" kp="10000" name="jaka_finger1_actuator"/> -->
-        <!-- <position ctrllimited="true" ctrlrange="0.0 0.04" joint="jaka_finger2_joint" kp="10000" name="jaka_finger2_actuator"/> -->
+        <general class="jaka" name="actuator1" joint="joint1" gainprm="4500" biasprm="0 -4500 -450" forcerange="-330 330" ctrlrange="-6.28 6.28"/>
+        <general class="jaka" name="actuator2" joint="joint2" gainprm="4500" biasprm="0 -4500 -450" forcerange="-330 330" ctrlrange="-1.48 4.62"/>
+        <general class="jaka" name="actuator3" joint="joint3" gainprm="3500" biasprm="0 -3500 -350" forcerange="-150 150" ctrlrange="-3.05 3.05"/>
+        <general class="jaka" name="actuator4" joint="joint4" gainprm="2000" biasprm="0 -2000 -200" forcerange="-56 56" ctrlrange="-1.48 4.62"/>
+        <general class="jaka" name="actuator5" joint="joint5" gainprm="2000" biasprm="0 -2000 -200" forcerange="-56 56" ctrlrange="-6.28 6.28"/>
+        <general class="jaka" name="actuator6" joint="joint6" gainprm="2000" biasprm="0 -2000 -200" forcerange="-56 56" ctrlrange="-6.28 6.28"/>
     </actuator>
 
     <sensor>

@@ -4,8 +4,8 @@ mujoco wrappers
 
 ## To Do
 
-- [ ] gymnasium envs setup
-- [ ] azure kinect DK stl file update
+- [ ] pih expert data generation
+- [ ] pih IRL training
 
 ## Folder Structure
 
@@ -14,3 +14,4 @@ mujoco wrappers
 - models: Robot description files.
 - nodes: ROS2 nodes for debugging C++ Algorithms
 - scripts: Test programs and some examples.
+- data: Expert demostrations used for IRL or BC training
