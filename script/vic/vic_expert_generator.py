@@ -1,5 +1,31 @@
 #!/usr/bin/env python3
 """
+VIC Expert Data Generator with IRL PKL Export
+
+This script generates expert trajectory data for the peg-in-hole task using
+adaptive stiffness admittance control. It can output both traditional CSV 
+format and IRL-compatible PKL format for Inverse Reinforcement Learning.
+
+Usage:
+    # Interactive mode
+    python vic_expert.py
+    
+    # Command line mode (specify task)
+    python vic_expert.py pih
+    
+    # Edit expert_pkl_name in MujocoSimulator.__init__ to control IRL PKL export
+
+IRL Format:
+    - Observations: 12D [pose_error(6) + velocity_error(6)]
+    - Actions: 7D [K1, K2, K3, K4, K5, K6, damping_ratio]
+    
+Configuration:
+    - To enable IRL PKL export: Set expert_pkl_name = 'your_filename.pkl' in MujocoSimulator.__init__
+    - To disable IRL PKL export: Set expert_pkl_name = None in MujocoSimulator.__init__
+    
+Author: GitHub Copilot
+"""
+"""
 Asynchronous Admittance Control with Decoupled Policy and Controller Threads
 
 Key Features:
@@ -305,8 +331,12 @@ class MujocoSimulator:
         self.xml_file = 'models/jaka_zu12/jaka_pih.xml'
         self.task = task
         
+        # Edit this line to specify PKL filename for IRL expert dataset export
+        # Set to None to skip IRL PKL export, or provide filename like 'expert_pih_demo.pkl'
+        self.expert_pkl_name = 'expert_pih_1.pkl'  # Edit this filename as needed
+        
 
-        self.duration = 3.5
+        self.duration = 3.0
             
         # Frequency settings
         self.policy_frequency = 25.0  # Policy (IK computation): 25Hz
@@ -342,7 +372,7 @@ class MujocoSimulator:
         self.Kc_far = np.diag([1000.0, 1000.0, 1000.0, 400.0, 400.0, 400.0])  # High stiffness for far distance
         self.Kc_near = np.diag([200.0, 200.0, 200.0, 50.0, 50.0, 50.0])    # Low stiffness for close distance
         self.Kc = self.Kc_far.copy()  # Start with high stiffness
-        self.distance_threshold = 0.05  # 4cm threshold
+        self.distance_threshold = 0.04  # 4cm threshold
         
         # Hole position from XML file (center of the hole structure)
         self.hole_position = np.array([0.0, -0.7, 0.02])  # Center of hole
@@ -775,16 +805,20 @@ class MujocoSimulator:
             self.controller_thread.join(timeout=1.0)
             
         self.get_logger().info("All threads stopped")
-        self.save_trajectory_data()
+        self.save_trajectory_data(expert_pkl_name=getattr(self, 'expert_pkl_name', None))
 
-    def save_trajectory_data(self):
-        """Save trajectory data to CSV file only"""
+    def save_trajectory_data(self, expert_pkl_name=None):
+        """Save trajectory data to files"""
+        import pickle
         import csv
         
-        data_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
+        data_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
+        log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
         os.makedirs(data_dir, exist_ok=True)
         
-        csv_file = os.path.join(data_dir, f'trajectory_{self.task}.csv')
+        
+        # Save CSV format
+        csv_file = os.path.join(log_dir, f'trajectory_{self.task}.csv')
         with open(csv_file, 'w', newline='') as f:
             writer = csv.writer(f)
             header = ['time', 'desired_x', 'desired_y', 'desired_z',
@@ -809,8 +843,166 @@ class MujocoSimulator:
                 row.extend(self.trajectory_data['joint_angles'][i])
                 writer.writerow(row)
         
-        self.get_logger().info(f"CSV trajectory data saved to: {csv_file}")
+        # Save IRL expert dataset format (if requested)
+        if expert_pkl_name:
+            expert_data = self._convert_to_irl_dataset()
+            expert_pkl_file = os.path.join(data_dir, expert_pkl_name)
+            with open(expert_pkl_file, 'wb') as f:
+                pickle.dump(expert_data, f)
+            self.get_logger().info(f"IRL expert dataset saved to: {expert_pkl_file}")
+        
 
+    def _convert_to_irl_dataset(self):
+        """Convert trajectory data to IRL dataset format
+        
+        Returns:
+            dict: IRL dataset with observations and actions
+                observations (list): 12D observations [pose_error(6) + velocity_error(6)]
+                actions (list): 7D actions [K1, K2, K3, K4, K5, K6, damping_ratio] 
+        """
+        observations = []
+        actions = []
+        
+        print(f"Converting {len(self.trajectory_data['time'])} trajectory points to IRL format...")
+        
+        for i, t in enumerate(self.trajectory_data['time']):
+            # Get current and target poses
+            actual_pos = np.array(self.trajectory_data['actual_pos'][i])  # Current position
+            desired_pos = np.array(self.trajectory_data['desired_pos'][i])  # Target position
+            actual_rot_flat = np.array(self.trajectory_data['actual_rot'][i])
+            desired_rot_flat = np.array(self.trajectory_data['desired_rot'][i])
+            
+            # Reshape rotation matrices
+            actual_rot = actual_rot_flat.reshape(3, 3)  # Current rotation
+            desired_rot = desired_rot_flat.reshape(3, 3)  # Target rotation
+            
+            # =================== POSE ERROR ===================
+            # Position error: current - target (3D)
+            position_error = actual_pos - desired_pos  
+            
+            # Orientation error: current - target (3D, axis-angle)
+            # R_error = R_actual * R_desired^T
+            rotation_error_mat = actual_rot @ desired_rot.T
+            orientation_error = self._rotation_matrix_to_axis_angle(rotation_error_mat)
+            
+            # =================== VELOCITY ERROR ===================
+            # Get target velocity at current time
+            if hasattr(self, 'dpd_t') and self.dpd_t is not None:
+                target_linear_vel = np.array(self.dpd_t(t)).flatten()
+                if hasattr(self, 'dRd_t') and self.dRd_t is not None:
+                    target_angular_vel = self._rotation_matrix_derivative_to_angular_velocity(
+                        desired_rot, np.array(self.dRd_t(t)).reshape(3, 3)
+                    )
+                else:
+                    target_angular_vel = np.zeros(3)
+            else:
+                target_linear_vel = np.zeros(3)
+                target_angular_vel = np.zeros(3)
+            
+            # Compute current velocity using finite difference
+            if i > 0:
+                dt = self.trajectory_data['time'][i] - self.trajectory_data['time'][i-1]
+                if dt > 1e-6:
+                    # Current linear velocity
+                    prev_actual_pos = np.array(self.trajectory_data['actual_pos'][i-1])
+                    current_linear_vel = (actual_pos - prev_actual_pos) / dt
+                    
+                    # Current angular velocity
+                    prev_actual_rot = np.array(self.trajectory_data['actual_rot'][i-1]).reshape(3, 3)
+                    dR_actual = actual_rot @ prev_actual_rot.T
+                    current_angular_vel = self._rotation_matrix_to_axis_angle(dR_actual) / dt
+                else:
+                    current_linear_vel = np.zeros(3)
+                    current_angular_vel = np.zeros(3)
+            else:
+                current_linear_vel = np.zeros(3)
+                current_angular_vel = np.zeros(3)
+            
+            # Velocity error: current - target (6D)
+            linear_velocity_error = current_linear_vel - target_linear_vel  # 3D
+            angular_velocity_error = current_angular_vel - target_angular_vel  # 3D
+            
+            # =================== 12D OBSERVATION ===================
+            observation = np.concatenate([
+                position_error,           # 3D: current_pos - target_pos
+                orientation_error,        # 3D: current_rot - target_rot (axis-angle)
+                linear_velocity_error,    # 3D: current_vel - target_vel
+                angular_velocity_error    # 3D: current_angvel - target_angvel
+            ])  # Total: 12D
+            
+            # =================== 7D ACTION ===================
+            # Extract expert impedance parameters
+            stiffness_norm = self.trajectory_data['stiffness_norm'][i]
+            transition_factor = self.trajectory_data['transition_factor'][i]
+            
+            # Reconstruct the actual K values used by the expert
+            # Based on adaptive stiffness: Kc = transition_factor * Kc_far + (1 - transition_factor) * Kc_near
+            Kc_far_diag = np.array([1000.0, 1000.0, 1000.0, 400.0, 400.0, 400.0])
+            Kc_near_diag = np.array([200.0, 200.0, 200.0, 50.0, 50.0, 50.0])
+            
+            expert_stiffness = transition_factor * Kc_far_diag + (1 - transition_factor) * Kc_near_diag
+            K1, K2, K3, K4, K5, K6 = expert_stiffness
+            
+            # Expert damping ratio
+            d = self.d  # This was set to 0.5 in the original code
+            
+            # 7D action: [K1, K2, K3, K4, K5, K6, damping_ratio]
+            action = np.array([K1, K2, K3, K4, K5, K6, d])
+            
+            observations.append(observation.tolist())
+            actions.append(action.tolist())
+        
+        # Add debug information
+        obs_array = np.array(observations)
+        act_array = np.array(actions)
+        
+        print(f"Observation statistics:")
+        print(f"  Shape: {obs_array.shape}")
+        print(f"  Position error range: [{obs_array[:, :3].min():.4f}, {obs_array[:, :3].max():.4f}]")
+        print(f"  Orientation error range: [{obs_array[:, 3:6].min():.4f}, {obs_array[:, 3:6].max():.4f}]")
+        print(f"  Velocity error range: [{obs_array[:, 6:].min():.4f}, {obs_array[:, 6:].max():.4f}]")
+        
+        print(f"Action statistics:")
+        print(f"  Shape: {act_array.shape}")
+        print(f"  K1-K3 range: [{act_array[:, :3].min():.1f}, {act_array[:, :3].max():.1f}]")
+        print(f"  K4-K6 range: [{act_array[:, 3:6].min():.1f}, {act_array[:, 3:6].max():.1f}]")
+        print(f"  Damping range: [{act_array[:, 6].min():.3f}, {act_array[:, 6].max():.3f}]")
+        
+        return {
+            'observations': observations,  # 12D: [pos_error(3) + ori_error(3) + vel_error(6)]
+            'actions': actions,           # 7D: [K1, K2, K3, K4, K5, K6, d]
+            'metadata': {
+                'observation_dim': 12,
+                'action_dim': 7,
+                'trajectory_length': len(observations),
+                'task': self.task,
+                'observation_description': 'pose_error(6D) + velocity_error(6D): current - target',
+                'action_description': 'impedance_parameters: [K1, K2, K3, K4, K5, K6, damping_ratio]',
+                'error_convention': 'current - target (positive means overshoot)',
+            }
+        }
+    
+    def _rotation_matrix_to_axis_angle(self, R):
+        """Convert rotation matrix to axis-angle representation"""
+        try:
+            from scipy.spatial.transform import Rotation as ScipyRotation
+            r = ScipyRotation.from_matrix(R)
+            return r.as_rotvec()
+        except:
+            # Fallback implementation
+            angle = np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))
+            if np.sin(angle) == 0:
+                return np.zeros(3)
+            axis = np.array([R[2,1] - R[1,2], R[0,2] - R[2,0], R[1,0] - R[0,1]]) / (2 * np.sin(angle))
+            return axis * angle
+    
+    def _rotation_matrix_derivative_to_angular_velocity(self, R, dR):
+        """Convert rotation matrix derivative to angular velocity"""
+        # Angular velocity: ω = 2 * trace(dR * R^T) where the result is skew-symmetric
+        # Extract the vector from the skew-symmetric matrix
+        omega_hat = dR @ R.T
+        return np.array([omega_hat[2,1], omega_hat[0,2], omega_hat[1,0]])
+        
     def key_callback(self, keycode):
         """Key callback for simulation control"""
         if chr(keycode) == ' ':
@@ -832,7 +1024,9 @@ def main(args=None):
     if args and len(args) > 0:
         task = args[0]
     else:
-        task = input("Enter task name ('regulation', 'pih'): ")
+        task = input("Enter task name ('regulation', 'pih'): ").strip()
+        if not task:
+            task = 'pih'
     
     simulator = MujocoSimulator(task=task)
     
@@ -840,6 +1034,11 @@ def main(args=None):
     print(f"- Policy (IK): {simulator.policy_frequency} Hz")
     print(f"- Controller: {simulator.controller_frequency} Hz") 
     print("- Simulation: Continuous, non-blocking")
+    print(f"- Task: {task}")
+    if simulator.expert_pkl_name:
+        print(f"- IRL PKL Export: {simulator.expert_pkl_name}")
+    else:
+        print("- IRL PKL Export: Disabled (edit expert_pkl_name in MujocoSimulator.__init__ to enable)")
     print("\nControls: Space = Pause/Resume")
 
     try:

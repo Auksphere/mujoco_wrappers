@@ -27,7 +27,7 @@ def calculate_desired_pose_trajectory(task, duration = 10.0):
         Rd_default = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
 
     elif task == "pih":
-        pd_default = np.array([0.0, -0.70, 0.1])  # Center of the hole
+        pd_default = np.array([0.00, -0.702, 0.14])  
         Rd_default = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
         
     else:
@@ -42,7 +42,7 @@ def calculate_desired_pose_trajectory(task, duration = 10.0):
         Rd_t_sim = Rd_default_sym
         
     elif task == 'pih':
-        pd_t_sim = pd_default_sym + sp.Matrix([0, 0, -0.04 * t])
+        pd_t_sim = pd_default_sym + sp.Matrix([0, 0, -0.045 * t])
         Rd_t_sim = Rd_default_sym
 
 

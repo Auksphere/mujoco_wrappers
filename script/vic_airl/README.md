@@ -1,5 +1,7 @@
 # Variable Impedance Control Learning via AIRL
 
+暂时还在调整专家数据生成，等待训练
+
 基于论文 "Learning Variable Impedance Control via Inverse Reinforcement Learning for Force-Related Tasks" (Zhang et al., IEEE RA-L 2021) 的实现。
 
 ## 概述
