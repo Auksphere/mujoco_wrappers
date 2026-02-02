@@ -89,6 +89,7 @@ class PolicyOutput:
     distance_to_hole: float
     stiffness_norm: float
     transition_factor: float
+    damping_ratio: float  # Add damping ratio to policy output
     success: bool
 
 @dataclass
@@ -152,7 +153,8 @@ class LinearInterpolator:
                     'x_admittance': sample.x_admittance.copy(),
                     'distance_to_hole': sample.distance_to_hole,
                     'stiffness_norm': sample.stiffness_norm,
-                    'transition_factor': sample.transition_factor
+                    'transition_factor': sample.transition_factor,
+                    'damping_ratio': sample.damping_ratio
                 }
                 
             # Find interpolation interval
@@ -166,7 +168,8 @@ class LinearInterpolator:
                     'x_admittance': sample.x_admittance.copy(),
                     'distance_to_hole': sample.distance_to_hole,
                     'stiffness_norm': sample.stiffness_norm,
-                    'transition_factor': sample.transition_factor
+                    'transition_factor': sample.transition_factor,
+                    'damping_ratio': sample.damping_ratio
                 }
             elif target_time >= times[-1]:
                 sample = self.buffer[-1] 
@@ -176,7 +179,8 @@ class LinearInterpolator:
                     'x_admittance': sample.x_admittance.copy(),
                     'distance_to_hole': sample.distance_to_hole,
                     'stiffness_norm': sample.stiffness_norm,
-                    'transition_factor': sample.transition_factor
+                    'transition_factor': sample.transition_factor,
+                    'damping_ratio': sample.damping_ratio
                 }
             else:
                 # Linear interpolation between two samples
@@ -202,6 +206,7 @@ class LinearInterpolator:
                 dist_interp = (1 - alpha) * sample1.distance_to_hole + alpha * sample2.distance_to_hole
                 stiff_interp = (1 - alpha) * sample1.stiffness_norm + alpha * sample2.stiffness_norm
                 trans_interp = (1 - alpha) * sample1.transition_factor + alpha * sample2.transition_factor
+                damp_interp = (1 - alpha) * sample1.damping_ratio + alpha * sample2.damping_ratio
                 
                 # SLERP for rotation matrices
                 R_interp = self._slerp_rotation(sample1.Rd_modified, sample2.Rd_modified, alpha)
@@ -212,7 +217,8 @@ class LinearInterpolator:
                     'x_admittance': x_interp,
                     'distance_to_hole': dist_interp,
                     'stiffness_norm': stiff_interp,
-                    'transition_factor': trans_interp
+                    'transition_factor': trans_interp,
+                    'damping_ratio': damp_interp
                 }
                 
     def _slerp_rotation(self, R1, R2, t):
@@ -332,8 +338,7 @@ class MujocoSimulator:
         self.task = task
         
         # Edit this line to specify PKL filename for IRL expert dataset export
-        # Set to None to skip IRL PKL export, or provide filename like 'expert_pih_demo.pkl'
-        self.expert_pkl_name = 'expert_pih_1.pkl'  # Edit this filename as needed
+        self.expert_pkl_name = 'expert_pih_19.pkl'  # Edit this filename as needed
         
 
         self.duration = 3.0
@@ -365,7 +370,11 @@ class MujocoSimulator:
 
         # Admittance control parameters (used in policy thread)
 
-        self.d = 0.5
+        # Adaptive damping parameters
+        self.d_far = 0.5   # Damping ratio when far from hole
+        self.d_near = 2.0  # Damping ratio when close to hole  
+        self.d = self.d_far  # Start with low damping (far from hole)
+        
         self.Mc = np.diag([20.0, 20.0, 20.0, 5, 5, 5])
         
         # Adaptive Kc parameters
@@ -391,7 +400,8 @@ class MujocoSimulator:
             'time': [], 'desired_pos': [], 'actual_pos': [], 'modified_pos': [],
             'desired_rot': [], 'actual_rot': [], 'modified_rot': [],
             'force': [], 'admittance_displacement': [], 'joint_angles': [],
-            'distance_to_hole': [], 'stiffness_norm': [], 'transition_factor': []
+            'distance_to_hole': [], 'stiffness_norm': [], 'transition_factor': [],
+            'damping_ratio': []  # Add damping ratio to trajectory data
         }
         
         # Store latest robot state for data recording
@@ -504,6 +514,7 @@ class MujocoSimulator:
                             distance_to_hole=distance_to_hole,
                             stiffness_norm=kc_norm,
                             transition_factor=transition_factor,
+                            damping_ratio=self.d,  # Include current adaptive damping
                             success=True
                         )
                         
@@ -579,6 +590,7 @@ class MujocoSimulator:
                                     self.trajectory_data['distance_to_hole'].append(interpolated_data['distance_to_hole'])
                                     self.trajectory_data['stiffness_norm'].append(interpolated_data['stiffness_norm'])
                                     self.trajectory_data['transition_factor'].append(interpolated_data['transition_factor'])
+                                    self.trajectory_data['damping_ratio'].append(interpolated_data['damping_ratio'])
                                     
                                     self.get_logger().debug(f"Controller: t={current_time:.3f}s, data recorded")
                                     
@@ -610,18 +622,21 @@ class MujocoSimulator:
         return SimpleLogger()
 
     def update_adaptive_stiffness(self, peg_position):
-        """Update Kc based on distance between peg and hole"""
+        """Update Kc and d based on distance between peg and hole"""
         # Calculate distance between peg and hole
         distance_to_hole = np.linalg.norm(peg_position - self.hole_position)
         
         # Smooth transition using sigmoid function
-        # When distance > threshold, use high stiffness
-        # When distance < threshold, use low stiffness
+        # When distance > threshold, use high stiffness and low damping
+        # When distance < threshold, use low stiffness and high damping
         transition_sharpness = 50.0  # Controls how sharp the transition is
         transition_factor = 1.0 / (1.0 + np.exp(-transition_sharpness * (distance_to_hole - self.distance_threshold)))
         
         # Interpolate between near and far stiffness
         self.Kc = transition_factor * self.Kc_far + (1.0 - transition_factor) * self.Kc_near
+        
+        # Interpolate between near and far damping (opposite trend to stiffness)
+        self.d = transition_factor * self.d_far + (1.0 - transition_factor) * self.d_near
         
         # Update damping coefficient accordingly
         self.Dc = self.Kc * self.d
@@ -694,6 +709,7 @@ class MujocoSimulator:
             distance_to_hole=initial_distance,
             stiffness_norm=np.linalg.norm(np.diag(self.Kc_far[:3, :3])),
             transition_factor=1.0,  # Start far, so use high stiffness
+            damping_ratio=self.d_far,  # Start far, so use low damping
             success=True
         )
         self.interpolator.add_sample(initial_policy_output)
@@ -826,7 +842,7 @@ class MujocoSimulator:
                      'modified_x', 'modified_y', 'modified_z',
                      'force_x', 'force_y', 'force_z', 'torque_x', 'torque_y', 'torque_z',
                      'adm_disp_x', 'adm_disp_y', 'adm_disp_z', 'adm_disp_rx', 'adm_disp_ry', 'adm_disp_rz',
-                     'distance_to_hole', 'stiffness_norm', 'transition_factor']
+                     'distance_to_hole', 'stiffness_norm', 'transition_factor', 'damping_ratio']
             header.extend([f'joint_{i+1}' for i in range(self.n)])
             writer.writerow(header)
             
@@ -840,6 +856,7 @@ class MujocoSimulator:
                 row.append(self.trajectory_data['distance_to_hole'][i])
                 row.append(self.trajectory_data['stiffness_norm'][i])
                 row.append(self.trajectory_data['transition_factor'][i])
+                row.append(self.trajectory_data['damping_ratio'][i])  # Add damping ratio to CSV
                 row.extend(self.trajectory_data['joint_angles'][i])
                 writer.writerow(row)
         
@@ -943,11 +960,11 @@ class MujocoSimulator:
             expert_stiffness = transition_factor * Kc_far_diag + (1 - transition_factor) * Kc_near_diag
             K1, K2, K3, K4, K5, K6 = expert_stiffness
             
-            # Expert damping ratio
-            d = self.d  # This was set to 0.5 in the original code
+            # Get the actual adaptive damping ratio used by the expert at this time point
+            expert_damping = self.trajectory_data['damping_ratio'][i]
             
             # 7D action: [K1, K2, K3, K4, K5, K6, damping_ratio]
-            action = np.array([K1, K2, K3, K4, K5, K6, d])
+            action = np.array([K1, K2, K3, K4, K5, K6, expert_damping])
             
             observations.append(observation.tolist())
             actions.append(action.tolist())

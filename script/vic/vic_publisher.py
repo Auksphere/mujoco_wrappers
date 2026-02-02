@@ -784,7 +784,7 @@ class MujocoSimulator:
         data_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
         os.makedirs(data_dir, exist_ok=True)
         
-        csv_file = os.path.join(data_dir, f'trajectory_{self.task}.csv')
+        csv_file = os.path.join(data_dir, f'trajectory_expert_{self.task}.csv')
         with open(csv_file, 'w', newline='') as f:
             writer = csv.writer(f)
             header = ['time', 'desired_x', 'desired_y', 'desired_z',
