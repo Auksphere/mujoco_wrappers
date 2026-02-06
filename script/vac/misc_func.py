@@ -17,6 +17,27 @@ def hat_map(w):
 def calculate_desired_pose_trajectory(task, duration = 10.0):
     """
     Defines the symbolic trajectory for the end-effector based on task type.
+    
+    Args:
+        task (str): Task type - 'regulation' or 'pih' (peg-in-hole)
+        duration (float): Total trajectory duration in seconds
+        
+    Returns:
+        tuple: (pd_t, Rd_t, dpd_t, dRd_t, ddpd_t, ddRd_t)
+            - pd_t: Position trajectory function pd(t)
+            - Rd_t: Orientation trajectory function Rd(t) 
+            - dpd_t: Velocity trajectory function dpd/dt(t)
+            - dRd_t: Angular velocity trajectory function dRd/dt(t)
+            - ddpd_t: Acceleration trajectory function d²pd/dt²(t)
+            - ddRd_t: Angular acceleration trajectory function d²Rd/dt²(t)
+    
+    Trajectory Details:
+        pih (peg-in-hole): Two-phase smooth trajectory
+            - Phase 1 (0 to 60% duration): Move from start position to hole entrance
+            - Phase 2 (60% to 100% duration): Insert from entrance to target inside hole
+            - Uses quintic polynomial interpolation for smooth velocity profiles
+            
+        regulation: Static regulation at fixed position
     """
     t = sp.symbols('t')
     max_time = duration
@@ -27,7 +48,7 @@ def calculate_desired_pose_trajectory(task, duration = 10.0):
         Rd_default = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
 
     elif task == "pih":
-        pd_default = np.array([0.00, -0.702, 0.14])  
+        pd_default = np.array([0.0, -0.70, 0.15])  
         Rd_default = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
         
     else:
@@ -42,7 +63,33 @@ def calculate_desired_pose_trajectory(task, duration = 10.0):
         Rd_t_sim = Rd_default_sym
         
     elif task == 'pih':
-        pd_t_sim = pd_default_sym + sp.Matrix([0, 0, -0.045 * t])
+        # Define key waypoints for two-phase trajectory
+        start_position = pd_default_sym  
+        hole_entrance = sp.Matrix([0, -0.702, 0.08])  
+        hole_target = sp.Matrix([0, -0.7, 0.01]) 
+        
+        t_transition = 0.7 * max_time  # Transition time between phases
+        
+        # s_total = 6*(t/max_time)**5 - 15*(t/max_time)**4 + 10*(t/max_time)**3
+        
+        # Weight for phase selection (0 for phase 1, 1 for phase 2)
+        phase_weight = sp.tanh(10 * (t - t_transition))  # Smooth transition around t_transition
+        phase_weight = (phase_weight + 1) / 2  # Map from [-1,1] to [0,1]
+        
+        # Phase 1: start -> entrance trajectory
+        t1_norm = sp.Min(t / t_transition, 1)
+        s1 = 6*t1_norm**5 - 15*t1_norm**4 + 10*t1_norm**3
+        phase1_pos = start_position + s1 * (hole_entrance - start_position)
+        
+        # Phase 2: entrance -> target trajectory  
+        t2_norm = sp.Max(0, (t - t_transition) / (max_time - t_transition))
+        s2 = 6*t2_norm**5 - 15*t2_norm**4 + 10*t2_norm**3
+        phase2_pos = hole_entrance + s2 * (hole_target - hole_entrance)
+        
+        # Blend between the two phases
+        pd_t_sim = (1 - phase_weight) * phase1_pos + phase_weight * phase2_pos
+        
+        # Orientation remains constant (pointing down)
         Rd_t_sim = Rd_default_sym
 
 

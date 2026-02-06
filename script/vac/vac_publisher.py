@@ -342,7 +342,7 @@ class MujocoSimulator:
         self.Kc_far = np.diag([1000.0, 1000.0, 1000.0, 400.0, 400.0, 400.0])  # High stiffness for far distance
         self.Kc_near = np.diag([200.0, 200.0, 200.0, 50.0, 50.0, 50.0])    # Low stiffness for close distance
         self.Kc = self.Kc_far.copy()  # Start with high stiffness
-        self.distance_threshold = 0.05  # 4cm threshold
+        self.distance_threshold = 0.04  # 4cm threshold
         
         # Hole position from XML file (center of the hole structure)
         self.hole_position = np.array([0.0, -0.7, 0.02])  # Center of hole
@@ -764,7 +764,7 @@ class MujocoSimulator:
                     time.sleep(sleep_time)
             
         # Clean shutdown
-        self.get_logger().info("Simulation finished, stopping threads...")
+        self.get_logger().info("Simulation finished")
         self.simulation_running = False
         self.policy_running = False
         self.controller_running = False

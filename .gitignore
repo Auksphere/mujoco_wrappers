@@ -170,6 +170,7 @@ __pycache__/
 MUJOCO_LOG.TXT
 *.pkl
 *.pt
+*.csv
 _METADATA
 checkpoint
 wandb/
