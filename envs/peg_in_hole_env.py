@@ -55,54 +55,39 @@ class PegInHoleEnv(gym.Env):
         self.max_episode_steps = max_episode_steps
         self.current_step = 0
         
-        # Task parameters
         self.success_threshold = success_threshold
         self.max_force = max_force
         
-        # Get important model IDs
         self.ee_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "jaka_end_effector")
         self.peg_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "attachment")
         
-        # Get hole position from body (not geom, as hole is a body with multiple geoms)
         try:
             self.hole_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "hole")
             # Need to forward kinematics first to get world position
             mujoco.mj_forward(self.model, self.data)
             self.hole_pos = self.data.xpos[self.hole_body_id].copy()
         except:
-            # Default hole position if not found
-            self.hole_pos = np.array([0.0, -0.7, 0.0])
-        
-        # Joint indices (first 6 joints are the robot arm)
+            self.hole_pos = np.array([0.0, -0.7, 0.02])
+
         self.arm_joint_indices = np.arange(6)
         
-        # Define observation space for Variable Admittance Control
-        # State: [e_t(3), pd_t(3)] = tracking error + desired position (position only, 6D total)
-        obs_dim = 6  # tracking error + desired position
+        obs_dim = 6 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
         
-        # Define action space for Variable Admittance Control
-        # Action: [K1, K2, K3, K4, K5, K6, d_t] = 7D impedance parameters
-        # K1-K6: stiffness parameters, d_t: damping ratio
         self.action_space = spaces.Box(
             low=0.0, high=1.0, shape=(7,), dtype=np.float32
         )
+    
+        self.k_range = [50.0, 1000.0]
+        self.damping_ratio_range = [0.1, 5.0]
+
+        self.trajectory_time = 0.0 
+        self.trajectory_duration = 3.5  
+        self.start_position = None  
+        self.target_position = None 
         
-        # Impedance parameter ranges for action scaling
-        # K1-K6: Stiffness parameters (N/m for position, Nm/rad for orientation)
-        self.k_range = [50.0, 1000.0]  # Stiffness range
-        # Damping ratio d (dimensionless)
-        self.damping_ratio_range = [0.1, 2.0]
-        
-        # Trajectory parameters for desired position pd_t
-        self.trajectory_time = 0.0  # Current time in trajectory
-        self.trajectory_duration = 3.0  # Total trajectory duration
-        self.start_position = None  # Will be set in reset
-        self.target_position = None  # Final target position (hole)
-        
-        # Initial configuration (pre-computed)
         self.initial_qpos = np.array([-1.75916382, 1.27408681, -2.06908278,
                                       2.35226387, 1.57079097, 1.38243476])
         
@@ -158,19 +143,17 @@ class PegInHoleEnv(gym.Env):
     
     def _scale_action(self, action):
         """Scale normalized action [0, 1] to actual impedance parameters."""
-        # K1-K6: Stiffness parameters
+
         k_params = action[0:6] * (self.k_range[1] - self.k_range[0]) + self.k_range[0]
-        # Damping ratio d_t
         damping_ratio = action[6] * (self.damping_ratio_range[1] - self.damping_ratio_range[0]) + self.damping_ratio_range[0]
         
         return k_params, damping_ratio
     
     def _check_success(self, obs):
         """Check if peg is successfully inserted into hole."""
-        tracking_error = obs[0:3]  # e_t
-        desired_position = obs[3:6]  # pd_t
+        tracking_error = obs[0:3] 
+        desired_position = obs[3:6] 
         
-        # Success criteria: close to final target and small tracking error
         target_distance = np.linalg.norm(desired_position - self.target_position)
         tracking_error_norm = np.linalg.norm(tracking_error)
         
@@ -178,14 +161,12 @@ class PegInHoleEnv(gym.Env):
     
     def _check_failure(self, obs):
         """Check if episode should terminate due to failure."""
-        tracking_error = obs[0:3]  # e_t
+        tracking_error = obs[0:3]
         
-        # Failure if tracking error becomes too large
         tracking_error_norm = np.linalg.norm(tracking_error)
-        if tracking_error_norm > 0.5:  # 50cm tracking error is failure
+        if tracking_error_norm > 0.5:  
             return True
             
-        # Check joint limits
         joint_pos = self.data.qpos[self.arm_joint_indices]
         joint_limits_low = self.model.jnt_range[self.arm_joint_indices, 0]
         joint_limits_high = self.model.jnt_range[self.arm_joint_indices, 1]
@@ -196,64 +177,51 @@ class PegInHoleEnv(gym.Env):
     
     def step(self, action):
         """Execute one step in the environment with Variable Admittance Control."""
-        # Update trajectory time
         self.trajectory_time += self.control_dt
         
-        # Scale action to impedance parameters
         k_params, damping_ratio = self._scale_action(action)
-        
-        # Get current observation for control
+
         obs_current = self._get_obs()
-        tracking_error = obs_current[0:3]  # e_t = p - pd
-        desired_position = obs_current[3:6]  # pd_t
-        
-        # Variable Admittance Control
-        # Calculate desired position modification: pd_new = pd + e_admittance
-        # where e_admittance comes from: M*e'' + D*e' + K*e = F_external
-        
-        # For simplicity, use proportional control based on tracking error and impedance
-        # In real implementation, this would involve integrating admittance dynamics
-        K = np.diag(k_params[:3])  # Use first 3 stiffness values for position
-        D = damping_ratio * 2 * np.sqrt(K)  # Damping matrix
-        
-        # Simulate external force (could be from force sensor in real system)
-        # For now, use a simple model based on tracking error
-        F_external = -K @ tracking_error  # Proportional to tracking error
-        
-        # Admittance modification (simplified)
-        # In full implementation: solve M*e''_adm + D*e'_adm + K*e_adm = F_external
-        M = np.diag([1.0, 1.0, 1.0])  # Mass matrix (simplified)
-        e_admittance = np.linalg.solve(K, F_external)  # Steady-state solution
-        
-        # Modified desired position
-        pd_modified = desired_position + e_admittance
-        
-        # Position control to pd_modified
+        tracking_error = obs_current[0:3]
+        desired_position = obs_current[3:6]
+
+        K = np.diag(k_params[:3])
+        M = np.diag([200.0, 200.0, 200.0])
+        D = damping_ratio * np.sqrt(K)
+
         ee_pos = self.data.site_xpos[self.ee_site_id].copy()
-        position_error = pd_modified - ee_pos
-        
-        # Convert to joint torques using Jacobian transpose
+        ee_vel = self.data.site_xvelp[self.ee_site_id].copy()
+
+        pd_t = desired_position
+        pd_dot = (pd_t - ee_pos) / self.control_dt
+
+        e_pos = ee_pos - pd_t
+        e_vel = ee_vel - pd_dot
+
+        F_external = -K @ e_pos - D @ e_vel
+
+        A = M / (self.control_dt * self.control_dt) + D / (2.0 * self.control_dt)
+        b = F_external - K @ e_pos
+        e_admittance = np.linalg.solve(A, b)
+
+        pd_modified = pd_t + e_admittance
+
         nv = self.model.nv
-        jacp = np.zeros((3, nv))  # Position jacobian
+        jacp = np.zeros((3, nv))
         mujoco.mj_jacSite(self.model, self.data, jacp, None, self.ee_site_id)
-        
-        # Use only first 6 joints (arm)
+
         J_pos = jacp[:, :6]
-        
-        # Apply proportional control
-        kp = 1000.0  # Position gain
-        desired_force = kp * position_error
+
+        position_error = pd_modified - ee_pos
+        desired_force = K @ position_error
         tau = J_pos.T @ desired_force
         self.data.ctrl[:6] = tau
-        
-        # Run simulation for n_substeps
+
         for _ in range(self.n_substeps):
             mujoco.mj_step(self.model, self.data)
-        
-        # Get new observation
+
         obs = self._get_obs()
         
-        # No reward in AIRL - reward will be provided by discriminator
         reward = 0.0
         
         # Check termination
@@ -279,8 +247,7 @@ class PegInHoleEnv(gym.Env):
             'modified_desired_position': pd_modified,
             'tracking_error': tracking_error
         }
-        
-        # Log trajectory data for AIRL
+
         self.trajectory_log.append({
             'obs': obs.copy(),
             'action': action.copy(),
@@ -297,42 +264,33 @@ class PegInHoleEnv(gym.Env):
     def reset(self, seed=None, options=None):
         """Reset the environment to initial state."""
         super().reset(seed=seed)
-        
-        # Reset simulation
+
         mujoco.mj_resetData(self.model, self.data)
-        
-        # Set initial joint configuration
+
         self.initial_qpos = np.array([-1.759, 1.245, -2.084, 2.397, 1.571, 1.382])
         self.data.qpos[self.arm_joint_indices] = self.initial_qpos
-        
-        # Add small random perturbations for variability
+
         if seed is not None:
             np.random.seed(seed)
         self.data.qpos[self.arm_joint_indices] += np.random.uniform(-0.02, 0.02, size=6)
-        
-        # Update hole position based on current model state
+
         mujoco.mj_forward(self.model, self.data)
         try:
             self.hole_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base")
             self.hole_pos = self.data.xpos[self.hole_body_id].copy()
-            self.hole_pos[2] = 0.02  # Set hole center height
+            self.hole_pos[2] = 0.02
         except:
-            self.hole_pos = np.array([0.0, -0.7, 0.02])  # Default hole position
+            self.hole_pos = np.array([0.0, -0.7, 0.02]) 
         
-        # Set target position (final goal)
         self.target_position = self.hole_pos.copy()
-        
-        # Set start position (current end-effector position)
+
         self.start_position = self.data.site_xpos[self.ee_site_id].copy()
-        
-        # Reset trajectory time
+
         self.trajectory_time = 0.0
-        
-        # Reset counters
+
         self.current_step = 0
         self.trajectory_log = []
-        
-        # Get initial observation
+
         obs = self._get_obs()
         info = {
             'hole_position': self.hole_pos.copy(),
