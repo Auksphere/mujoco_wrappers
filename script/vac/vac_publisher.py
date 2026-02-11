@@ -486,6 +486,11 @@ class LinearInterpolator:
         slerp = Slerp(key_times, key_rots)
         return slerp(t).as_matrix()
 
+    def get_buffer_length(self) -> int:
+        """Return the current number of samples in the interpolator buffer (thread-safe)."""
+        with self.lock:
+            return len(self.buffer)
+
 class RobotState:
     def __init__(self, model, data, ee_name, robot_name):
         self.model = model
@@ -664,7 +669,8 @@ class MujocoSimulator:
             'time': [], 'desired_pos': [], 'actual_pos': [], 'modified_pos': [],
             'desired_rot': [], 'actual_rot': [], 'modified_rot': [],
             'force': [], 'admittance_displacement': [], 'joint_angles': [],
-            'distance_to_hole': [], 'stiffness_norm': [], 'transition_factor': [], 'damping_ratio': []
+            'distance_to_hole': [], 'stiffness_norm': [], 'transition_factor': [], 'damping_ratio': [],
+            'K1': [], 'K2': [], 'K3': [], 'K4': [], 'K5': [], 'K6': []
         }
         
         # Store latest robot state for data recording
@@ -716,8 +722,8 @@ class MujocoSimulator:
             q_guess = np.array([-1.75916382, 1.27408681, -2.06908278,
                                 2.35226387, 1.57079097, 1.38243476])
             
-            q_test = np.array([-1.2566722057, 1.7113961457, -2.0669261733, 
-                               1.9386768602, 1.5726861712, 1.8829036979])
+            q_test = np.array([-1.7556965143, 1.3382339406, -2.0411338141, 
+                               2.2839842982, 1.5714735449, 1.3786260203])
 
             q_sol, success, iterations, error, jl_valid, solve_time = temp_ik_solver.solve(
                 temp_model, temp_data, T_target, q_guess
@@ -885,10 +891,44 @@ class MujocoSimulator:
                                     self.trajectory_data['force'].append(self.latest_robot_state.force_torque.tolist())
                                     self.trajectory_data['admittance_displacement'].append(interpolated_data['x_admittance'].tolist())
                                     self.trajectory_data['joint_angles'].append(self.desired_q.tolist())
-                                    self.trajectory_data['distance_to_hole'].append(interpolated_data['distance_to_hole'])
+
+                                    # Decide whether to use interpolated distance or compute from latest robot state.
+                                    # Use interpolated_data only when the interpolator buffer has at least 2 samples
+                                    # (so interpolation/extrapolation is meaningful). Otherwise compute distance
+                                    # directly from the latest robot state to avoid recording the initial placeholder.
+                                    try:
+                                        buf_len = self.interpolator.get_buffer_length()
+                                    except Exception:
+                                        buf_len = 0
+
+                                    if buf_len >= 2 and interpolated_data is not None and 'distance_to_hole' in interpolated_data:
+                                        # Trust interpolated value when there are enough samples
+                                        dist_to_hole = float(interpolated_data['distance_to_hole'])
+                                    else:
+                                        # Fallback: compute from main-thread robot snapshot (latest position)
+                                        try:
+                                            dist_to_hole = float(np.linalg.norm(self.latest_robot_state.current_position - self.hole_position))
+                                        except Exception:
+                                            # Last resort: use whatever interpolated value is available or zero
+                                            dist_to_hole = interpolated_data.get('distance_to_hole') if interpolated_data is not None else 0.0
+
+                                    self.trajectory_data['distance_to_hole'].append(dist_to_hole)
                                     self.trajectory_data['stiffness_norm'].append(interpolated_data['stiffness_norm'])
                                     self.trajectory_data['transition_factor'].append(interpolated_data['transition_factor'])
                                     self.trajectory_data['damping_ratio'].append(self.current_damping_ratio)
+
+                                    # Record per-axis stiffness K1..K6. Prefer current_Kc if available (policy output),
+                                    # otherwise fall back to controller's Kc diagonal.
+                                    try:
+                                        K_diag = np.diag(self.current_Kc)
+                                    except Exception:
+                                        try:
+                                            K_diag = np.diag(self.Kc)
+                                        except Exception:
+                                            K_diag = np.zeros(6)
+
+                                    for k_idx in range(6):
+                                        self.trajectory_data[f'K{k_idx+1}'].append(float(K_diag[k_idx]))
                                     
                             except Exception as e:
                                 self.get_logger().error(f"Data recording error: {e}")
@@ -1161,6 +1201,8 @@ class MujocoSimulator:
                      'force_x', 'force_y', 'force_z', 'torque_x', 'torque_y', 'torque_z',
                      'adm_disp_x', 'adm_disp_y', 'adm_disp_z', 'adm_disp_rx', 'adm_disp_ry', 'adm_disp_rz',
                      'distance_to_hole', 'stiffness_norm', 'transition_factor', 'damping_ratio']
+            # Add per-axis stiffness columns
+            header.extend([f'K{i+1}' for i in range(6)])
             header.extend([f'joint_{i+1}' for i in range(self.n)])
             writer.writerow(header)
             
@@ -1175,6 +1217,9 @@ class MujocoSimulator:
                 row.append(self.trajectory_data['stiffness_norm'][i])
                 row.append(self.trajectory_data['transition_factor'][i])
                 row.append(self.trajectory_data['damping_ratio'][i])
+                # Append per-axis stiffness values K1..K6
+                for k_idx in range(6):
+                    row.append(self.trajectory_data.get(f'K{k_idx+1}', [0]*len(self.trajectory_data['time']))[i])
                 row.extend(self.trajectory_data['joint_angles'][i])
                 writer.writerow(row)
         
@@ -1212,7 +1257,7 @@ def test_airl_policy():
         test_cases = [
             (np.array([0.01, 0.02, -0.01]), np.array([0.0, -0.7, 0.15])),
             (np.array([0.05, -0.03, 0.02]), np.array([0.0, -0.7, 0.05])),
-            (np.array([0.001, 0.001, -0.001]), np.array([0.0, -0.7, 0.02])),
+            (np.array([0.001, 0.001, -0.001]), np.array([0.0, -0.7, 0.025])),
         ]
         
         for i, (error, desired_pos) in enumerate(test_cases):
@@ -1241,7 +1286,7 @@ def main(args=None):
     task = 'pih'
     
     print("="*60)
-    print("AIRL-Enhanced Variable Admittance Control")
+    print("AIRL Variable Admittance Control")
     print("="*60)
     
     # Test AIRL policy first

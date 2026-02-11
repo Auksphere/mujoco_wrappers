@@ -225,6 +225,11 @@ class LinearInterpolator:
                     'transition_factor': trans_interp,
                     'damping_ratio': damp_interp
                 }
+
+    def get_buffer_length(self) -> int:
+        """Return the current number of samples in the interpolator buffer (thread-safe)."""
+        with self.lock:
+            return len(self.buffer)
                 
     def _slerp_rotation(self, R1, R2, t):
         """Spherical linear interpolation for rotation matrices"""
@@ -401,7 +406,8 @@ class MujocoSimulator:
             'desired_rot': [], 'actual_rot': [], 'modified_rot': [],
             'force': [], 'admittance_displacement': [], 'joint_angles': [],
             'distance_to_hole': [], 'stiffness_norm': [], 'transition_factor': [],
-            'damping_ratio': [] 
+            'damping_ratio': [],
+            'K1': [], 'K2': [], 'K3': [], 'K4': [], 'K5': [], 'K6': []
         }
         
         self.latest_robot_state = None
@@ -465,8 +471,8 @@ class MujocoSimulator:
             # Initial guess for IK (reasonable starting configuration)
             q_guess = np.array([-1.75916382, 1.27408681, -2.06908278,
                                 2.35226387, 1.57079097, 1.38243476])
-            q_test = np.array([-1.2566722057, 1.7113961457, -2.0669261733, 
-                               1.9386768602, 1.5726861712, 1.8829036979])
+            q_test = np.array([-1.7556965143, 1.3382339406, -2.0411338141, 
+                               2.2839842982, 1.5714735449, 1.3786260203])
             # Solve IK for the random starting pose
             q_sol, success, iterations, error, jl_valid, solve_time = temp_ik_solver.solve(
                 temp_model, temp_data, T_target, q_guess
@@ -645,10 +651,41 @@ class MujocoSimulator:
                                     self.trajectory_data['force'].append(self.latest_robot_state.force_torque.tolist())
                                     self.trajectory_data['admittance_displacement'].append(interpolated_data['x_admittance'].tolist())
                                     self.trajectory_data['joint_angles'].append(self.desired_q.tolist())
-                                    self.trajectory_data['distance_to_hole'].append(interpolated_data['distance_to_hole'])
+
+                                    try:
+                                        buf_len = self.interpolator.get_buffer_length()
+                                    except Exception:
+                                        buf_len = 0
+                                    if buf_len >= 2 and interpolated_data is not None and 'distance_to_hole' in interpolated_data:
+                                        # Trust interpolated value when there are enough samples
+                                        dist_to_hole = float(interpolated_data['distance_to_hole'])
+                                    else:
+                                        try:
+                                            dist_to_hole = float(np.linalg.norm(self.latest_robot_state.current_position - self.hole_position))
+                                        except Exception:
+                                            dist_to_hole = interpolated_data.get('distance_to_hole') if interpolated_data is not None else 0.0
+
+                                    self.trajectory_data['distance_to_hole'].append(dist_to_hole)
                                     self.trajectory_data['stiffness_norm'].append(interpolated_data['stiffness_norm'])
                                     self.trajectory_data['transition_factor'].append(interpolated_data['transition_factor'])
                                     self.trajectory_data['damping_ratio'].append(interpolated_data['damping_ratio'])
+
+                                    # Compute and record per-axis stiffness (K1-K6). If interpolated transition factor
+                                    # is available, reconstruct K diag from near/far presets; otherwise use current Kc.
+                                    try:
+                                        tf = interpolated_data.get('transition_factor', None)
+                                    except Exception:
+                                        tf = None
+
+                                    if tf is not None:
+                                        Kc_far_diag = np.diag(self.Kc_far)
+                                        Kc_near_diag = np.diag(self.Kc_near)
+                                        K_diag = tf * Kc_far_diag + (1.0 - tf) * Kc_near_diag
+                                    else:
+                                        K_diag = np.diag(self.Kc)
+
+                                    for k_idx in range(6):
+                                        self.trajectory_data[f'K{k_idx+1}'].append(float(K_diag[k_idx]))
                                     
                                     self.get_logger().debug(f"Controller: t={current_time:.3f}s, data recorded")
                                     
@@ -889,6 +926,8 @@ class MujocoSimulator:
                      'force_x', 'force_y', 'force_z', 'torque_x', 'torque_y', 'torque_z',
                      'adm_disp_x', 'adm_disp_y', 'adm_disp_z', 'adm_disp_rx', 'adm_disp_ry', 'adm_disp_rz',
                      'distance_to_hole', 'stiffness_norm', 'transition_factor', 'damping_ratio']
+            # Add per-axis stiffness columns
+            header.extend([f'K{i+1}' for i in range(6)])
             header.extend([f'joint_{i+1}' for i in range(self.n)])
             writer.writerow(header)
             
@@ -903,6 +942,9 @@ class MujocoSimulator:
                 row.append(self.trajectory_data['stiffness_norm'][i])
                 row.append(self.trajectory_data['transition_factor'][i])
                 row.append(self.trajectory_data['damping_ratio'][i])  # Add damping ratio to CSV
+                # Append per-axis stiffness values K1..K6
+                for k_idx in range(6):
+                    row.append(self.trajectory_data.get(f'K{k_idx+1}', [0]*len(self.trajectory_data['time']))[i])
                 row.extend(self.trajectory_data['joint_angles'][i])
                 writer.writerow(row)
         

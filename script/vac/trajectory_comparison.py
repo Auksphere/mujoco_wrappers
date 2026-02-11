@@ -99,6 +99,40 @@ def plot_damping_comparison(expert_data, policy_data, save_path=None):
     
     plt.show()
 
+
+def plot_Kz_comparison(expert_data, policy_data, save_path=None):
+    """Plot distance_to_hole vs Kz (3rd position stiffness) comparison"""
+    plt.figure(figsize=(12, 8))
+
+    # Plot expert trajectory
+    plt.plot(expert_data['distance_to_hole'], expert_data['K3'], 
+             'b-', linewidth=2, label='Expert', alpha=0.8)
+    
+    # Plot policy trajectory
+    plt.plot(policy_data['distance_to_hole'], policy_data['K3'], 
+             'r--', linewidth=2, label='Policy', alpha=0.8)
+    
+    plt.xlabel('Distance to Hole', fontsize=14)
+    plt.ylabel('Kz (position stiffness)', fontsize=14)
+    plt.title('Distance to Hole vs Kz Comparison', fontsize=16)
+    plt.legend(fontsize=12)
+    plt.grid(True, alpha=0.3)
+
+    # Add statistical information
+    expert_mean = expert_data['K3'].mean()
+    policy_mean = policy_data['K3'].mean()
+    plt.text(0.02, 0.98, f'Expert Mean: {expert_mean:.1f}\nPolicy Mean: {policy_mean:.1f}', 
+             transform=plt.gca().transAxes, verticalalignment='top', 
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Kz comparison plot saved to: {save_path}")
+    
+    plt.show()
+
 def analyze_data(expert_data, policy_data):
     """Analyze basic statistics of the data"""
     print("\n=== Data Analysis ===")
@@ -106,11 +140,13 @@ def analyze_data(expert_data, policy_data):
     print(f"  Distance to hole: [{expert_data['distance_to_hole'].min():.3f}, {expert_data['distance_to_hole'].max():.3f}]")
     print(f"  Stiffness norm: [{expert_data['stiffness_norm'].min():.1f}, {expert_data['stiffness_norm'].max():.1f}]")
     print(f"  Damping ratio: [{expert_data['damping_ratio'].min():.3f}, {expert_data['damping_ratio'].max():.3f}]")
+    print(f"  K3 (position z-axis stiffness): [{expert_data['K3'].min():.1f}, {expert_data['K3'].max():.1f}]")
     
     print(f"\nPolicy Trajectory:")
     print(f"  Distance to hole: [{policy_data['distance_to_hole'].min():.3f}, {policy_data['distance_to_hole'].max():.3f}]")
     print(f"  Stiffness norm: [{policy_data['stiffness_norm'].min():.1f}, {policy_data['stiffness_norm'].max():.1f}]")
     print(f"  Damping ratio: [{policy_data['damping_ratio'].min():.3f}, {policy_data['damping_ratio'].max():.3f}]")
+    print(f"  K3 (position z-axis stiffness): [{policy_data['K3'].min():.1f}, {policy_data['K3'].max():.1f}]")
 
 def main():
     """Main function"""
@@ -131,13 +167,14 @@ def main():
     
     stiffness_plot_path = results_dir / "distance_vs_stiffness_comparison.png"
     damping_plot_path = results_dir / "distance_vs_damping_comparison.png"
+    Kz_plot_path = results_dir / "distance_vs_Kz_comparison.png"
     
     # Generate comparison plots
-    print("\nGenerating stiffness comparison plot...")
     plot_stiffness_comparison(expert_data, policy_data, stiffness_plot_path)
     
-    print("\nGenerating damping comparison plot...")
     plot_damping_comparison(expert_data, policy_data, damping_plot_path)
+
+    plot_Kz_comparison(expert_data, policy_data, Kz_plot_path)
     
     print(f"\nPlots saved to: {results_dir}")
 

@@ -1101,7 +1101,7 @@ def main(args=None):
     task = 'pih'
     
     print("="*60)
-    print("AIRL-Enhanced Variable Admittance Control")
+    print("AIRL Variable Admittance Control")
     print("="*60)
     
     # Test AIRL policy first

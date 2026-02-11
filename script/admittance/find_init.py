@@ -25,7 +25,7 @@ ik_solver = IKArm(solver_type='QP', tol=1e-4, ilimit=500)
 
 def get_trajectory_start(task):
     if task == 'regulation':
-        return np.array([0.3, -0.5, 0.3]), np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
+        return np.array([0.0, -0.7, 0.12]), np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
     elif task == 'circle':
         return np.array([0.1, -0.7, 0.3]), np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
     elif task == 'line':
