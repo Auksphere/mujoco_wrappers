@@ -52,6 +52,7 @@ import mujoco.viewer
 import time
 import numpy as np
 import sys
+import argparse
 import os
 import threading
 import queue
@@ -342,7 +343,7 @@ class RobotState:
         return ft, dft
 
 class MujocoSimulator:
-    def __init__(self, task='pih', trajectory_index=0, index_offset=0):
+    def __init__(self, task='pih', trajectory_index=0, index_offset=0, mode=None):
         self.n = 6
         self.xml_file = 'models/jaka_zu12/jaka_pih.xml'
         self.task = task
@@ -352,7 +353,7 @@ class MujocoSimulator:
         self.expert_pkl_name = f'expert_{task}_{trajectory_index+index_offset}.pkl'
         
 
-        self.duration = 5.0
+        self.duration = 2.0
             
         # Frequency settings
         self.policy_frequency = 25.0  # Policy (IK computation): 25Hz
@@ -376,7 +377,6 @@ class MujocoSimulator:
         self.time_lock = threading.Lock()
         self.paused = False
 
-        # Control parameters (accessed only from controller thread)
         self.desired_q = np.array([0.0] * self.n)
 
         # Admittance control parameters (used in policy thread)
@@ -391,7 +391,7 @@ class MujocoSimulator:
         self.Kc_near = np.diag([200.0, 200.0, 500.0, 50.0, 50.0, 50.0])  
         self.Kc = self.Kc_far.copy()  
         self.distance_threshold = 0.05  # 5cm threshold
-        self.hole_position = np.array([0.0, -0.7, 0.02])  
+        self.hole_position = np.array([0.0, -0.7, 0.12])  
         
         self.Dc = self.Kc * self.d
 
@@ -413,91 +413,15 @@ class MujocoSimulator:
         self.latest_robot_state = None
 
         self.pd_t, self.Rd_t, self.dpd_t, self.dRd_t, self.ddpd_t, self.ddRd_t = calculate_desired_pose_trajectory(self.task, self.duration)
-        self.initial_q = self.get_initial_joint_config()
+        # Use shared helper in misc_func for initial configuration
+        from misc_func import get_initial_joint_config
+        self.initial_q = get_initial_joint_config(self.task, self.xml_file, IKArm, mode)
         
         self.model = None
         self.data = None
         self.robot_state = None
         self.ik_solver = None
         self.previous_q = None
-
-    def get_initial_joint_config(self):
-        """Calculate initial joint configuration with random starting position"""
-        try:
-            from misc_func import calculate_desired_pose_trajectory
-            
-            # Get the trajectory functions which contain the default pose information
-            pd_t, Rd_t, _, _, _, _ = calculate_desired_pose_trajectory(self.task, 0.1)  # Use short duration just to get defaults
-            
-            # Extract default orientation
-            Rd_default = np.array(Rd_t(0.0)).reshape(3, 3)
-            
-            # Generate random starting position in cylindrical region
-            # Center: [0.0, -0.70, 0.15]
-            # xy: radius 0.3 (±0.3 in both x and y directions)
-            # z: +0.25 to -0.05 (i.e., from 0.10 to 0.40)
-            center = np.array([0.0, -0.70, 0.15])
-            
-            # Random position in cylinder
-            # Generate random angle and radius for xy plane
-            theta = np.random.uniform(0, 2*np.pi)
-            radius = np.random.uniform(0, 0.4)  # 0 to 0.4m radius
-            
-            # Random z offset
-            z_offset = np.random.uniform(-0.05, 0.25)  # -0.05 to +0.25 from center
-            
-            # Calculate random position
-            pd_random = center + np.array([
-                radius * np.cos(theta),  # x offset
-                radius * np.sin(theta),  # y offset
-                z_offset                 # z offset
-            ])
-            
-            print(f"[INFO] Random starting position: {pd_random}, task='{self.task}'")
-            print(f"[INFO] Offset from center {center}: [{pd_random[0]-center[0]:.3f}, {pd_random[1]-center[1]:.3f}, {pd_random[2]-center[2]:.3f}]")
-            
-            # Create target transformation matrix
-            T_target = np.eye(4)
-            T_target[:3, :3] = Rd_default
-            T_target[:3, 3] = pd_random
-            
-            # Temporarily load model to compute IK
-            temp_model = mujoco.MjModel.from_xml_path(self.xml_file)
-            temp_data = mujoco.MjData(temp_model)
-            
-            # Create temporary IK solver
-            temp_ik_solver = IKArm(solver_type='QP', tol=1e-4, ilimit=5000)
-            
-            # Initial guess for IK (reasonable starting configuration)
-            q_guess = np.array([-1.75916382, 1.27408681, -2.06908278,
-                                2.35226387, 1.57079097, 1.38243476])
-            q_test = np.array([-1.7556965143, 1.3382339406, -2.0411338141, 
-                               2.2839842982, 1.5714735449, 1.3786260203])
-            # Solve IK for the random starting pose
-            q_sol, success, iterations, error, jl_valid, solve_time = temp_ik_solver.solve(
-                temp_model, temp_data, T_target, q_guess
-            )
-            
-            if success:
-                # return q_sol
-                return q_test
-            else:
-                fallback_configs = {
-                    'pih': np.array([-1.75916382, 1.27408681, -2.06908278,
-                                      2.35226387, 1.57079097, 1.38243476]),
-                    'regulation': np.array([-1.7671236707, 1.5031112517, -1.8753320848, 
-                                            1.9429508990, 1.5703766827, 1.3875707847]),
-                }
-                return fallback_configs.get(self.task, np.array([0.0, np.pi/2, 0.0, np.pi/2, 0.0, 0.0]))
-                
-        except Exception as e:
-            fallback_configs = {
-                'pih': np.array([-1.75916382, 1.27408681, -2.06908278,
-                                  2.35226387, 1.57079097, 1.38243476]),
-                'regulation': np.array([-1.7671236707, 1.5031112517, -1.8753320848, 
-                                        1.9429508990, 1.5703766827, 1.3875707847]),
-            }
-            return fallback_configs.get(self.task, np.array([0.0, np.pi/2, 0.0, np.pi/2, 0.0, 0.0]))
 
     def policy_thread_worker(self):
         """Policy thread running at 25Hz - computes IK from Cartesian targets"""
@@ -1083,16 +1007,28 @@ class MujocoSimulator:
 
 
 def main(args=None):
-    task = 'pih'  # Default task
-    num_trajectories = 1  # Default number of trajectories
+    parser = argparse.ArgumentParser(description="Variable Admittance Control Expert Data Generator")
+
+    parser.add_argument("--mode", type=str, default=None, help="Initial config mode: 'test' for fixed seed, otherwise random")
+
+    parsed = parser.parse_args(args if args is not None else [])
+
+    task = "pih"
+    
     index_offset = 0
-    print(f"\n=== Generating {num_trajectories} trajectory(s) for task '{task}' ===")
+    mode = parsed.mode
+    if mode == 'test':
+        num_trajectories = 1
+    else:
+        num_trajectories = 80
+
+    print(f"\n=== Generating {num_trajectories} trajectory(s) for task '{task}' (mode={mode}) ===")
     
     for trajectory_idx in range(num_trajectories):
         print(f"\n--- Trajectory {trajectory_idx + 1}/{num_trajectories} ---")
         
         # Create simulator with unique PKL filename for each trajectory
-        simulator = MujocoSimulator(task=task, trajectory_index=trajectory_idx, index_offset=index_offset)
+        simulator = MujocoSimulator(task=task, trajectory_index=trajectory_idx, index_offset=index_offset, mode=mode)
         
         print(f"- Policy (IK): {simulator.policy_frequency} Hz")
         print(f"- Controller: {simulator.controller_frequency} Hz") 

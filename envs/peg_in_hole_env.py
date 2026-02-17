@@ -1,18 +1,3 @@
-#!/usr/bin/env python3
-"""
-Peg-in-Hole Environment for Variable Impedance Control Learning
-
-This environment is designed for learning variable impedance control policies
-using Adversarial Inverse Reinforcement Learning (AIRL) as described in:
-"Learning Variable Impedance Control via Inverse Reinforcement Learning for Force-Related Tasks"
-by Zhang et al., IEEE RA-L 2021.
-
-The environment provides:
-- State: joint positions, velocities, end-effector pose, force/torque readings
-- Action: impedance parameters (Kp, Kd) for each DOF
-- Reward: shaped by distance to goal and force constraints
-"""
-
 import numpy as np
 import mujoco
 import gymnasium as gym
@@ -38,7 +23,6 @@ class PegInHoleEnv(gym.Env):
         physics_dt: float = 0.001,  # 1kHz simulation frequency
         max_episode_steps: int = 500,
         render_mode: str = None,
-        success_threshold: float = 0.01,  # 1cm for successful insertion
         max_force: float = 50.0,  # Maximum allowed force in Newtons
     ):
         super().__init__()
@@ -55,7 +39,6 @@ class PegInHoleEnv(gym.Env):
         self.max_episode_steps = max_episode_steps
         self.current_step = 0
         
-        self.success_threshold = success_threshold
         self.max_force = max_force
         
         self.ee_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "jaka_end_effector")
@@ -67,7 +50,7 @@ class PegInHoleEnv(gym.Env):
             mujoco.mj_forward(self.model, self.data)
             self.hole_pos = self.data.xpos[self.hole_body_id].copy()
         except:
-            self.hole_pos = np.array([0.0, -0.7, 0.02])
+            self.hole_pos = np.array([0.0, -0.7, 0.12])
 
         self.arm_joint_indices = np.arange(6)
         
@@ -120,7 +103,7 @@ class PegInHoleEnv(gym.Env):
         from start_position to target_position (hole)
         """
         if self.start_position is None or self.target_position is None:
-            return np.array([0.0, -0.7, 0.01])  # Default position
+            return np.array([0.0, -0.7, 0.12])  # Default position
         
         # Normalize time to [0, 1]
         t_norm = min(t / self.trajectory_duration, 1.0)
@@ -284,7 +267,7 @@ class PegInHoleEnv(gym.Env):
             self.hole_pos = self.data.xpos[self.hole_body_id].copy()
             self.hole_pos[2] = 0.02
         except:
-            self.hole_pos = np.array([0.0, -0.7, 0.02]) 
+            self.hole_pos = np.array([0.0, -0.7, 0.12]) 
         
         self.target_position = self.hole_pos.copy()
 

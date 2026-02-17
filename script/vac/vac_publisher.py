@@ -21,6 +21,7 @@ import mujoco.viewer
 import time
 import numpy as np
 import sys
+import argparse
 import os
 import threading
 import queue
@@ -593,12 +594,12 @@ class RobotState:
         return ft, dft
 
 class MujocoSimulator:
-    def __init__(self, task='pih'):
+    def __init__(self, task='pih', mode=None):
         self.n = 6
         self.xml_file = 'models/jaka_zu12/jaka_pih.xml'
         self.task = task
         
-        self.duration = 5.0
+        self.duration = 2.0
             
         # Frequency settings
         self.policy_frequency = 25.0  # Policy (IK computation): 25Hz
@@ -641,21 +642,17 @@ class MujocoSimulator:
         self.d = 0.5
         self.Mc = np.diag([20.0, 20.0, 20.0, 5, 5, 5])
         
-        # Fallback fixed parameters (if AIRL policy not available)
         self.Kc_far = np.diag([1000.0, 1000.0, 1000.0, 400.0, 400.0, 400.0])
         self.Kc_near = np.diag([200.0, 200.0, 200.0, 50.0, 50.0, 50.0])
-        self.Kc = self.Kc_far.copy()  # Start with high stiffness
-        self.distance_threshold = 0.04  # 4cm threshold
+        self.Kc = self.Kc_far.copy() 
+        self.distance_threshold = 0.05  #
         
-        # Current impedance parameters (will be updated by AIRL policy or fallback)
         self.current_Kc = self.Kc_far.copy()
         self.current_Dc = self.current_Kc * self.d
         self.current_damping_ratio = self.d  # Initialize with default damping ratio
         
-        # Hole position from XML file (center of the hole structure)
-        self.hole_position = np.array([0.0, -0.7, 0.02])  # Center of hole
+        self.hole_position = np.array([0.0, -0.7, 0.12])  # Center of hole
         
-        # self.Dc = np.diag([10.0, 10.0, 10.0, 5.0, 5.0, 5.0])
         self.Dc = self.Kc * self.d
 
         # Admittance states (used in policy thread only)
@@ -678,7 +675,9 @@ class MujocoSimulator:
 
         # Initialize trajectory functions
         self.pd_t, self.Rd_t, self.dpd_t, self.dRd_t, self.ddpd_t, self.ddRd_t = calculate_desired_pose_trajectory(self.task, self.duration)
-        self.initial_q = self.get_initial_joint_config()
+        # Use shared helper in misc_func for initial configuration
+        from misc_func import get_initial_joint_config
+        self.initial_q = get_initial_joint_config(self.task, self.xml_file, IKArm, mode)
         
         # Shared references for thread access
         self.model = None
@@ -686,70 +685,6 @@ class MujocoSimulator:
         self.robot_state = None
         self.ik_solver = None
         self.previous_q = None
-
-    def get_initial_joint_config(self):
-        """Calculate initial joint configuration with random starting position"""
-        try:
-            from misc_func import calculate_desired_pose_trajectory
-            
-            pd_t, Rd_t, _, _, _, _ = calculate_desired_pose_trajectory(self.task, 0.1)
-            
-            Rd_default = np.array(Rd_t(0.0)).reshape(3, 3)
-            
-            center = np.array([0.0, -0.70, 0.15])
-            
-            theta = np.random.uniform(0, 2*np.pi)
-            radius = np.random.uniform(0, 0.4)
-            z_offset = np.random.uniform(-0.05, 0.25)
-            
-            pd_random = center + np.array([
-                radius * np.cos(theta),
-                radius * np.sin(theta),
-                z_offset
-            ])
-            
-            print(f"[INFO] Random starting position: {pd_random}, task='{self.task}'")
-            
-            T_target = np.eye(4)
-            T_target[:3, :3] = Rd_default
-            T_target[:3, 3] = pd_random
-            
-            temp_model = mujoco.MjModel.from_xml_path(self.xml_file)
-            temp_data = mujoco.MjData(temp_model)
-            
-            temp_ik_solver = IKArm(solver_type='QP', tol=1e-4, ilimit=5000)
-            
-            q_guess = np.array([-1.75916382, 1.27408681, -2.06908278,
-                                2.35226387, 1.57079097, 1.38243476])
-            
-            q_test = np.array([-1.7556965143, 1.3382339406, -2.0411338141, 
-                               2.2839842982, 1.5714735449, 1.3786260203])
-
-            q_sol, success, iterations, error, jl_valid, solve_time = temp_ik_solver.solve(
-                temp_model, temp_data, T_target, q_guess
-            )
-            
-            if success:
-                # return q_sol
-                return q_test
-            else:
-                fallback_configs = {
-                    'pih': np.array([-1.75916382, 1.27408681, -2.06908278,
-                                      2.35226387, 1.57079097, 1.38243476]),
-                    'regulation': np.array([-1.7671236707, 1.5031112517, -1.8753320848, 
-                                            1.9429508990, 1.5703766827, 1.3875707847]),
-                }
-                return fallback_configs.get(self.task, np.array([0.0, np.pi/2, 0.0, np.pi/2, 0.0, 0.0]))
-                
-        except Exception as e:
-            fallback_configs = {
-                'pih': np.array([-1.75916382, 1.27408681, -2.06908278,
-                                  2.35226387, 1.57079097, 1.38243476]),
-                'regulation': np.array([-1.7671236707, 1.5031112517, -1.8753320848, 
-                                        1.9429508990, 1.5703766827, 1.3875707847]),
-            }
-            return fallback_configs.get(self.task, np.array([0.0, np.pi/2, 0.0, np.pi/2, 0.0, 0.0]))
-
 
     def policy_thread_worker(self):
         """Policy thread running at 25Hz - computes IK from Cartesian targets"""
@@ -1255,9 +1190,9 @@ def test_airl_policy():
         
         # Test with sample inputs
         test_cases = [
-            (np.array([0.01, 0.02, -0.01]), np.array([0.0, -0.7, 0.15])),
-            (np.array([0.05, -0.03, 0.02]), np.array([0.0, -0.7, 0.05])),
-            (np.array([0.001, 0.001, -0.001]), np.array([0.0, -0.7, 0.025])),
+            (np.array([0.01, 0.02, -0.01]), np.array([0.0, -0.7, 0.35])),
+            (np.array([0.05, -0.03, 0.02]), np.array([0.0, -0.7, 0.23])),
+            (np.array([0.001, 0.001, -0.001]), np.array([0.0, -0.7, 0.12])),
         ]
         
         for i, (error, desired_pos) in enumerate(test_cases):
@@ -1284,6 +1219,14 @@ def test_airl_policy():
 
 def main(args=None):
 
+    parser = argparse.ArgumentParser(description="AIRL Variable Admittance Control Simulator")
+    
+    parser.add_argument("--mode", type=str, default=None, help="Initial config mode: 'test' for fixed seed, otherwise random")
+
+    parsed = parser.parse_args(args if args is not None else [])
+
+    mode1 = parsed.mode
+
     print("="*60)
     print("AIRL Variable Admittance Control")
     print("="*60)
@@ -1291,7 +1234,7 @@ def main(args=None):
     # Test AIRL policy first
     if not test_airl_policy():
         print("\nAIRL integration test failed, but simulation will continue with fallback parameters")
-    simulator = MujocoSimulator(task="pih")
+    simulator = MujocoSimulator(task="pih", mode=mode1)
     
     print(f"\nAsynchronous Control Architecture:")
     print(f"- Policy (IK): {simulator.policy_frequency} Hz")
@@ -1307,4 +1250,5 @@ def main(args=None):
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    main(sys.argv[1:] if len(sys.argv) > 1 else None)
