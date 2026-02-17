@@ -190,7 +190,11 @@ class PegInHoleEnv(gym.Env):
         D = damping_ratio * np.sqrt(K)
 
         ee_pos = self.data.site_xpos[self.ee_site_id].copy()
-        ee_vel = self.data.site_xvelp[self.ee_site_id].copy()
+        nv = self.model.nv
+        jacp = np.zeros((3, nv))
+        mujoco.mj_jacSite(self.model, self.data, jacp, None, self.ee_site_id)
+        qvel = self.data.qvel.copy()
+        ee_vel = jacp @ qvel
 
         pd_t = desired_position
         pd_dot = (pd_t - ee_pos) / self.control_dt

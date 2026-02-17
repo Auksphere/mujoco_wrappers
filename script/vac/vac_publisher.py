@@ -1283,8 +1283,7 @@ def test_airl_policy():
 
 
 def main(args=None):
-    task = 'pih'
-    
+
     print("="*60)
     print("AIRL Variable Admittance Control")
     print("="*60)
