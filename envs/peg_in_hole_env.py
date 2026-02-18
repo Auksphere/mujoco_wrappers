@@ -4,6 +4,7 @@ import gymnasium as gym
 from gymnasium import spaces
 from scipy.spatial.transform import Rotation as R
 import os
+import sys
 
 
 class PegInHoleEnv(gym.Env):
@@ -18,14 +19,17 @@ class PegInHoleEnv(gym.Env):
     
     def __init__(
         self,
-        xml_path: str = "models/jaka_zu12/jaka_pih.xml",
-        control_dt: float = 0.008,  # 25Hz control frequency
-        physics_dt: float = 0.001,  # 1kHz simulation frequency
+        xml_path: str = "models/jaka_zu12/jaka_pih_case0.xml",
+        control_dt: float = 0.008,
+        physics_dt: float = 0.001,
         max_episode_steps: int = 500,
         render_mode: str = None,
-        max_force: float = 50.0,  # Maximum allowed force in Newtons
+        max_force: float = 50.0,
     ):
         super().__init__()
+
+        # Keep the relative XML path for later (e.g., reset-time IK sampling)
+        self.xml_path = xml_path
         
         # Load MuJoCo model
         xml_full_path = os.path.join(os.path.dirname(__file__), '..', xml_path)
@@ -54,7 +58,7 @@ class PegInHoleEnv(gym.Env):
 
         self.arm_joint_indices = np.arange(6)
         
-        obs_dim = 6 
+        obs_dim = 12
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
@@ -67,7 +71,7 @@ class PegInHoleEnv(gym.Env):
         self.damping_ratio_range = [0.1, 5.0]
 
         self.trajectory_time = 0.0 
-        self.trajectory_duration = 3.5  
+        self.trajectory_duration = 3.0  
         self.start_position = None  
         self.target_position = None 
         
@@ -82,18 +86,23 @@ class PegInHoleEnv(gym.Env):
         self.trajectory_log = []
         
     def _get_obs(self):
-        """Get current observation: [e_t, pd_t] for Variable Admittance Control."""
-        # Get current end-effector position (actual position p)
+        """Get current observation for Variable Admittance Control."""
         ee_pos = self.data.site_xpos[self.ee_site_id].copy()
-        
-        # Calculate desired position pd_t based on current trajectory time
+
+        ee_rot_mat = self.data.site_xmat[self.ee_site_id].reshape(3, 3).copy()
+
         pd_t = self._get_desired_position(self.trajectory_time)
-        
-        # Tracking error e_t = actual_position - desired_position (p - pd)
+
+        desired_rot_mat = np.eye(3)
+
         tracking_error = ee_pos - pd_t
+
+        R_err = ee_rot_mat @ desired_rot_mat.T
+        rot_error = self._rotation_matrix_to_axis_angle(R_err)
+
+        desired_rot = self._rotation_matrix_to_axis_angle(desired_rot_mat)
         
-        # Combined observation: [e_t(3), pd_t(3)] = 6D
-        obs = np.concatenate([tracking_error, pd_t]).astype(np.float32)
+        obs = np.concatenate([tracking_error, pd_t, rot_error, desired_rot]).astype(np.float32)
         
         return obs
     
@@ -102,17 +111,19 @@ class PegInHoleEnv(gym.Env):
         Calculate desired position pd_t at time t using a smooth trajectory
         from start_position to target_position (hole)
         """
+        # If reset() hasn't populated start/target yet (or we're called very early),
+        # avoid returning a fixed constant which can make tracking_error misleading.
         if self.start_position is None or self.target_position is None:
-            return np.array([0.0, -0.7, 0.12])  # Default position
-        
-        # Normalize time to [0, 1]
+            try:
+                return self.data.site_xpos[self.ee_site_id].copy()
+            except Exception:
+                return self.hole_pos.copy() if hasattr(self, "hole_pos") else np.array([0.0, -0.7, 0.12])
+
         t_norm = min(t / self.trajectory_duration, 1.0)
-        
-        # Use smooth S-curve trajectory (quintic polynomial)
+
         # s(t) = 6t^5 - 15t^4 + 10t^3
         s = 6 * t_norm**5 - 15 * t_norm**4 + 10 * t_norm**3
-        
-        # Interpolate between start and target position
+
         pd_t = self.start_position + s * (self.target_position - self.start_position)
         
         return pd_t
@@ -210,8 +221,7 @@ class PegInHoleEnv(gym.Env):
         obs = self._get_obs()
         
         reward = 0.0
-        
-        # Check termination
+
         success = self._check_success(obs)
         failure = self._check_failure(obs)
         self.current_step += 1
@@ -254,18 +264,45 @@ class PegInHoleEnv(gym.Env):
 
         mujoco.mj_resetData(self.model, self.data)
 
-        self.initial_qpos = np.array([-1.759, 1.245, -2.084, 2.397, 1.571, 1.382])
-        self.data.qpos[self.arm_joint_indices] = self.initial_qpos
 
         if seed is not None:
             np.random.seed(seed)
-        self.data.qpos[self.arm_joint_indices] += np.random.uniform(-0.02, 0.02, size=6)
+
+        try:
+            from script.vac.misc_func import get_initial_joint_config
+
+            xml_full_path = os.path.join(os.path.dirname(__file__), '..', self.xml_path)
+
+            # Load IKArm (mirrors approach used elsewhere in this repo)
+            import importlib.util
+            controllers_dir = os.path.join(os.path.dirname(__file__), '..', 'controllers')
+            ik_path = os.path.join(controllers_dir, 'ik_arm.py')
+            util_path = os.path.join(controllers_dir, 'util.py')
+
+            # Ensure controllers.util exists for ik_arm imports
+            spec_util = importlib.util.spec_from_file_location('controllers.util', util_path)
+            util_module = importlib.util.module_from_spec(spec_util)
+            sys.modules['controllers.util'] = util_module
+            spec_util.loader.exec_module(util_module)
+
+            spec_ik = importlib.util.spec_from_file_location('controllers.ik_arm', ik_path)
+            ik_module = importlib.util.module_from_spec(spec_ik)
+            sys.modules['controllers.ik_arm'] = ik_module
+            spec_ik.loader.exec_module(ik_module)
+            IKArm = ik_module.IKArm
+
+            q0 = get_initial_joint_config(task='pih', xml_file=xml_full_path, ik_class=IKArm, mode=None)
+            self.data.qpos[self.arm_joint_indices] = q0
+        except Exception as e:
+            # Fallback to the previous deterministic init if helper isn't available
+            self.initial_qpos = np.array([-1.759, 1.245, -2.084, 2.397, 1.571, 1.382])
+            self.data.qpos[self.arm_joint_indices] = self.initial_qpos
 
         mujoco.mj_forward(self.model, self.data)
         try:
             self.hole_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base")
             self.hole_pos = self.data.xpos[self.hole_body_id].copy()
-            self.hole_pos[2] = 0.02
+            self.hole_pos[2] =0.12
         except:
             self.hole_pos = np.array([0.0, -0.7, 0.12]) 
         

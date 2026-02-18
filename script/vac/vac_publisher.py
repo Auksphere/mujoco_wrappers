@@ -21,9 +21,9 @@ import mujoco.viewer
 import time
 import numpy as np
 import sys
-import argparse
 import os
 import threading
+import argparse
 import queue
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -59,7 +59,7 @@ IKArm = ik_arm_module.IKArm
 class VariableImpedancePolicy(nn.Module):
     """
     Simplified and optimized policy network for impedance learning
-    Input: [e_t, pd_t] (6D) - tracking error and desired position (normalized to [-1,1])
+    Input: [e_t, pd_t, e_r, rd_t] (12D) - pos error, desired pos, rot error, desired rotvec
     Output: [K1, K2, K3, K4, K5, K6, d_t] (7D) - impedance parameters (normalized to [0,1])
     
     Key improvements:
@@ -68,10 +68,9 @@ class VariableImpedancePolicy(nn.Module):
     3. Better parameter initialization
     4. Enhanced stability mechanisms
     """
-    def __init__(self, state_dim=6, action_dim=7, hidden_dim=128):
+    def __init__(self, state_dim=12, action_dim=7, hidden_dim=128):
         super(VariableImpedancePolicy, self).__init__()
         
-        # Simplified dual encoders 
         self.error_encoder = nn.Sequential(
             nn.Linear(3, hidden_dim // 2),
             nn.ReLU(),
@@ -83,10 +82,22 @@ class VariableImpedancePolicy(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.1)
         )
+
+        self.rot_error_encoder = nn.Sequential(
+            nn.Linear(3, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+
+        self.rot_desired_encoder = nn.Sequential(
+            nn.Linear(3, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
         
         # Simplified shared processing
         self.shared_net = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
             nn.Dropout(0.15),
             nn.Linear(hidden_dim, hidden_dim),
@@ -143,15 +154,22 @@ class VariableImpedancePolicy(nn.Module):
         if torch.isnan(state).any():
             state = torch.where(torch.isnan(state), torch.zeros_like(state), state)
         
-        # Split and encode input
-        tracking_error = state[:, :3]
-        desired_position = state[:, 3:]
-        
-        error_features = self.error_encoder(tracking_error)
-        position_features = self.position_encoder(desired_position)
+        # Split and encode input: [pos_err(3), pos_des(3), rot_err(3), rot_des(3)]
+        pos_error = state[:, 0:3]
+        pos_desired = state[:, 3:6]
+        rot_error = state[:, 6:9]
+        rot_desired = state[:, 9:12]
+
+        pos_error_features = self.error_encoder(pos_error)
+        pos_desired_features = self.position_encoder(pos_desired)
+        rot_error_features = self.rot_error_encoder(rot_error)
+        rot_desired_features = self.rot_desired_encoder(rot_desired)
         
         # Combine features
-        combined_features = torch.cat([error_features, position_features], dim=-1)
+        combined_features = torch.cat(
+            [pos_error_features, pos_desired_features, rot_error_features, rot_desired_features],
+            dim=-1,
+        )
         shared_features = self.shared_net(combined_features)
         
         # Generate outputs
@@ -191,10 +209,10 @@ class AIRLPolicyManager:
     def __init__(self, policy_path="script/models/airl/policy.pt", expert_data_path="data/expert_demonstration.pkl"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Load policy network with matching architecture (hidden_dim=128)
-        self.policy = VariableImpedancePolicy(hidden_dim=128).to(self.device)
+        # Load 12D policy network (hidden_dim=128)
+        self.policy = VariableImpedancePolicy(state_dim=12, hidden_dim=128).to(self.device)
         try:
-            self.policy.load_state_dict(torch.load(policy_path, map_location=self.device))
+            self.policy.load_state_dict(torch.load(policy_path, map_location=self.device), strict=True)
             self.policy.eval()
             print(f"AIRL policy loaded from: {policy_path}")
         except Exception as e:
@@ -212,6 +230,11 @@ class AIRLPolicyManager:
             
             observations = np.array(expert_data['observations'])
             actions = np.array(expert_data['actions'])
+
+            if observations.ndim != 2 or observations.shape[1] != 12:
+                raise ValueError(
+                    f"Expert observations must be shape (N, 12) for 12D state, got {observations.shape}"
+                )
             
             # Calculate normalization statistics
             self.obs_stats = {
@@ -306,10 +329,12 @@ class AIRLPolicyManager:
         
         return action_denorm
     
-    def get_impedance_parameters(self, tracking_error, desired_position):
-        """Get impedance parameters from AIRL policy"""
-        # Construct state [e_t(3), pd_t(3)]
-        state = np.concatenate([tracking_error.flatten(), desired_position.flatten()])
+
+    def get_impedance_parameters(self, pos_error, pos_desired, rot_error, rot_desired_rotvec):
+        """Get impedance parameters from AIRL policy using 12D state."""
+        state = np.concatenate(
+            [pos_error.flatten(), pos_desired.flatten(), rot_error.flatten(), rot_desired_rotvec.flatten()]
+        )
         
         # Normalize state
         state_norm = self.normalize_state(state)
@@ -486,7 +511,7 @@ class LinearInterpolator:
         key_times = [0, 1]
         slerp = Slerp(key_times, key_rots)
         return slerp(t).as_matrix()
-
+    
     def get_buffer_length(self) -> int:
         """Return the current number of samples in the interpolator buffer (thread-safe)."""
         with self.lock:
@@ -596,9 +621,9 @@ class RobotState:
 class MujocoSimulator:
     def __init__(self, task='pih', mode=None):
         self.n = 6
-        self.xml_file = 'models/jaka_zu12/jaka_pih.xml'
+        self.xml_file = 'models/jaka_zu12/jaka_pih_case0.xml'
         self.task = task
-        
+        self.mode = mode
         self.duration = 2.0
             
         # Frequency settings
@@ -638,30 +663,27 @@ class MujocoSimulator:
             print("Falling back to manual impedance parameters")
             self.airl_policy_manager = None
 
-        # Admittance control parameters (used in policy thread)
         self.d = 0.5
         self.Mc = np.diag([20.0, 20.0, 20.0, 5, 5, 5])
         
         self.Kc_far = np.diag([1000.0, 1000.0, 1000.0, 400.0, 400.0, 400.0])
         self.Kc_near = np.diag([200.0, 200.0, 200.0, 50.0, 50.0, 50.0])
-        self.Kc = self.Kc_far.copy() 
-        self.distance_threshold = 0.05  #
+        self.Kc = self.Kc_far.copy()  
+        self.distance_threshold = 0.05 
         
         self.current_Kc = self.Kc_far.copy()
         self.current_Dc = self.current_Kc * self.d
-        self.current_damping_ratio = self.d  # Initialize with default damping ratio
+        self.current_damping_ratio = self.d  
         
-        self.hole_position = np.array([0.0, -0.7, 0.12])  # Center of hole
+        self.hole_position = np.array([0.0, -0.7, 0.12])
         
         self.Dc = self.Kc * self.d
 
-        # Admittance states (used in policy thread only)
         self.x_admittance = np.zeros(6)
         self.dx_admittance = np.zeros(6)
         self.ddx_admittance = np.zeros(6)
         self.admittance_lock = threading.Lock()
 
-        # Trajectory recording
         self.trajectory_data = {
             'time': [], 'desired_pos': [], 'actual_pos': [], 'modified_pos': [],
             'desired_rot': [], 'actual_rot': [], 'modified_rot': [],
@@ -675,16 +697,15 @@ class MujocoSimulator:
 
         # Initialize trajectory functions
         self.pd_t, self.Rd_t, self.dpd_t, self.dRd_t, self.ddpd_t, self.ddRd_t = calculate_desired_pose_trajectory(self.task, self.duration)
-        # Use shared helper in misc_func for initial configuration
         from misc_func import get_initial_joint_config
         self.initial_q = get_initial_joint_config(self.task, self.xml_file, IKArm, mode)
-        
-        # Shared references for thread access
+
         self.model = None
         self.data = None
         self.robot_state = None
         self.ik_solver = None
         self.previous_q = None
+
 
     def policy_thread_worker(self):
         """Policy thread running at 25Hz - computes IK from Cartesian targets"""
@@ -731,7 +752,11 @@ class MujocoSimulator:
                         
                         wrench_6d = external_wrench
                         
-                        distance_to_hole, transition_factor = self.update_adaptive_stiffness(robot_state.current_position)
+                        distance_to_hole, transition_factor = self.update_adaptive_stiffness(
+                            robot_state.current_position,
+                            current_rotation=robot_state.current_rotation,
+                            desired_rotation=Rd_current,
+                        )
                         
                         self.ddx_admittance = np.linalg.solve(self.Mc, 
                             wrench_6d - self.current_Dc @ self.dx_admittance - self.current_Kc @ self.x_admittance)
@@ -826,17 +851,12 @@ class MujocoSimulator:
                                     self.trajectory_data['force'].append(self.latest_robot_state.force_torque.tolist())
                                     self.trajectory_data['admittance_displacement'].append(interpolated_data['x_admittance'].tolist())
                                     self.trajectory_data['joint_angles'].append(self.desired_q.tolist())
-
-                                    # Decide whether to use interpolated distance or compute from latest robot state.
-                                    # Use interpolated_data only when the interpolator buffer has at least 2 samples
-                                    # (so interpolation/extrapolation is meaningful). Otherwise compute distance
-                                    # directly from the latest robot state to avoid recording the initial placeholder.
                                     try:
                                         buf_len = self.interpolator.get_buffer_length()
                                     except Exception:
                                         buf_len = 0
 
-                                    if buf_len >= 2 and interpolated_data is not None and 'distance_to_hole' in interpolated_data:
+                                    if buf_len >= 1 and interpolated_data is not None and 'distance_to_hole' in interpolated_data:
                                         # Trust interpolated value when there are enough samples
                                         dist_to_hole = float(interpolated_data['distance_to_hole'])
                                     else:
@@ -892,7 +912,7 @@ class MujocoSimulator:
                 pass  # Skip debug messages
         return SimpleLogger()
 
-    def update_adaptive_stiffness(self, peg_position):
+    def update_adaptive_stiffness(self, peg_position, current_rotation=None, desired_rotation=None):
         """Update Kc and Dc using AIRL policy or fallback to distance-based method"""
         distance_to_hole = np.linalg.norm(peg_position - self.hole_position)
         
@@ -900,10 +920,24 @@ class MujocoSimulator:
             try:
                 current_time = self.current_time if hasattr(self, 'current_time') else 0.0
                 pd_current = np.array(self.pd_t(current_time)).flatten()
-                tracking_error = peg_position - pd_current
-                
+                pos_error = peg_position - pd_current
+
+                # Rotation terms (use safe fallbacks if not provided)
+                if current_rotation is None:
+                    current_rotation = np.eye(3)
+                if desired_rotation is None:
+                    desired_rotation = np.eye(3)
+
+                # rot_error = rotvec(R_actual * R_desired^T)
+                R_err = current_rotation @ desired_rotation.T
+                rot_error = ScipyRotation.from_matrix(R_err).as_rotvec()
+                rot_desired_rotvec = ScipyRotation.from_matrix(desired_rotation).as_rotvec()
+
                 Kc_policy, Dc_policy, damping_ratio = self.airl_policy_manager.get_impedance_parameters(
-                    tracking_error, pd_current
+                    pos_error=pos_error,
+                    pos_desired=pd_current,
+                    rot_error=rot_error,
+                    rot_desired_rotvec=rot_desired_rotvec,
                 )
                 
                 self.current_Kc = Kc_policy
@@ -1103,7 +1137,6 @@ class MujocoSimulator:
                 if sleep_time > 0:
                     time.sleep(sleep_time)
             
-        # Clean shutdown
         self.get_logger().info("Simulation finished")
         self.simulation_running = False
         self.policy_running = False
@@ -1119,10 +1152,7 @@ class MujocoSimulator:
 
     def save_trajectory_data(self):
         """Save trajectory data to files"""
-        import pickle
         import csv
-        
-        data_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
         log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
         os.makedirs(log_dir, exist_ok=True)
         
@@ -1136,7 +1166,6 @@ class MujocoSimulator:
                      'force_x', 'force_y', 'force_z', 'torque_x', 'torque_y', 'torque_z',
                      'adm_disp_x', 'adm_disp_y', 'adm_disp_z', 'adm_disp_rx', 'adm_disp_ry', 'adm_disp_rz',
                      'distance_to_hole', 'stiffness_norm', 'transition_factor', 'damping_ratio']
-            # Add per-axis stiffness columns
             header.extend([f'K{i+1}' for i in range(6)])
             header.extend([f'joint_{i+1}' for i in range(self.n)])
             writer.writerow(header)
@@ -1152,7 +1181,6 @@ class MujocoSimulator:
                 row.append(self.trajectory_data['stiffness_norm'][i])
                 row.append(self.trajectory_data['transition_factor'][i])
                 row.append(self.trajectory_data['damping_ratio'][i])
-                # Append per-axis stiffness values K1..K6
                 for k_idx in range(6):
                     row.append(self.trajectory_data.get(f'K{k_idx+1}', [0]*len(self.trajectory_data['time']))[i])
                 row.extend(self.trajectory_data['joint_angles'][i])
@@ -1188,7 +1216,6 @@ def test_airl_policy():
             expert_data_path="data/expert_demonstration.pkl"
         )
         
-        # Test with sample inputs
         test_cases = [
             (np.array([0.01, 0.02, -0.01]), np.array([0.0, -0.7, 0.35])),
             (np.array([0.05, -0.03, 0.02]), np.array([0.0, -0.7, 0.23])),
@@ -1199,8 +1226,15 @@ def test_airl_policy():
             print(f"\nTest case {i+1}:")
             print(f"  Tracking error: {error}")
             print(f"  Desired position: {desired_pos}")
-            
-            K_matrix, D_matrix, damping_ratio = airl_manager.get_impedance_parameters(error, desired_pos)
+
+            rot_error = np.zeros(3)
+            rot_desired_rotvec = np.zeros(3)
+            K_matrix, D_matrix, damping_ratio = airl_manager.get_impedance_parameters(
+                pos_error=error,
+                pos_desired=desired_pos,
+                rot_error=rot_error,
+                rot_desired_rotvec=rot_desired_rotvec,
+            )
             
             print(f"  Stiffness (diagonal): {np.diag(K_matrix)[:3]} N/m, {np.diag(K_matrix)[3:]} Nm/rad")
             print(f"  Damping (diagonal): {np.diag(D_matrix)[:3]} N*s/m, {np.diag(D_matrix)[3:]} Nm*s/rad")
@@ -1218,14 +1252,15 @@ def test_airl_policy():
 
 
 def main(args=None):
-
-    parser = argparse.ArgumentParser(description="AIRL Variable Admittance Control Simulator")
+    task = 'pih'
     
+    parser = argparse.ArgumentParser(description="Variable Admittance Control Expert Data Generator")
+
     parser.add_argument("--mode", type=str, default=None, help="Initial config mode: 'test' for fixed seed, otherwise random")
 
     parsed = parser.parse_args(args if args is not None else [])
 
-    mode1 = parsed.mode
+    mode = parsed.mode
 
     print("="*60)
     print("AIRL Variable Admittance Control")
@@ -1234,7 +1269,7 @@ def main(args=None):
     # Test AIRL policy first
     if not test_airl_policy():
         print("\nAIRL integration test failed, but simulation will continue with fallback parameters")
-    simulator = MujocoSimulator(task="pih", mode=mode1)
+    simulator = MujocoSimulator(task="pih",mode=mode)
     
     print(f"\nAsynchronous Control Architecture:")
     print(f"- Policy (IK): {simulator.policy_frequency} Hz")

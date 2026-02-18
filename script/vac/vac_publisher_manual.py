@@ -238,7 +238,6 @@ class PolicyRequestQueue:
         try:
             self.queue.put(robot_state, block=False)
         except queue.Full:
-            # Skip if queue is full (policy computation is falling behind)
             pass
             
     def get(self, timeout: float = 0.1) -> Optional[RobotStateSnapshot]:
@@ -454,7 +453,7 @@ class RobotState:
 class MujocoSimulator:
     def __init__(self, task='pih'):
         self.n = 6
-        self.xml_file = 'models/jaka_zu12/jaka_pih.xml'
+        self.xml_file = 'models/jaka_zu12/jaka_pih_case0.xml'
         self.task = task
         
         self.duration = 5.0

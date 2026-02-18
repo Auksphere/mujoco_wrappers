@@ -1,6 +1,7 @@
 import numpy as np
 import sympy as sp
 import mujoco
+from scipy.linalg import expm
 
 
 def vee_map(R):
@@ -21,7 +22,7 @@ def hat_map(w):
     )
     return w_hat
 
-def calculate_desired_pose_trajectory(task, duration = 10.0):
+def calculate_desired_pose_trajectory(task, duration = 10.0, Rd_default_override=None):
     """
     Defines the symbolic trajectory for the end-effector based on task type.
     
@@ -60,6 +61,9 @@ def calculate_desired_pose_trajectory(task, duration = 10.0):
         
     else:
         raise ValueError(f"Invalid task: {task}")
+
+    if Rd_default_override is not None:
+        Rd_default = np.array(Rd_default_override).reshape(3, 3)
     
     pd_default_sym = sp.Matrix([float(x) for x in pd_default])
     Rd_default_sym = sp.Matrix([[float(x) for x in row] for row in Rd_default])
@@ -73,7 +77,7 @@ def calculate_desired_pose_trajectory(task, duration = 10.0):
         # Define key waypoints for two-phase trajectory
         start_position = pd_default_sym  
         hole_entrance = sp.Matrix([0, -0.702, 0.17])  
-        hole_target = sp.Matrix([0, -0.7, 0.11]) 
+        hole_target = sp.Matrix([0, -0.7, 0.12]) 
         
         t_transition = 0.5 * max_time  # Transition time between phases
 
@@ -93,8 +97,8 @@ def calculate_desired_pose_trajectory(task, duration = 10.0):
         # Blend between the two phases
         pd_t_sim = (1 - phase_weight) * phase1_pos + phase_weight * phase2_pos
         
-        # Orientation remains constant (pointing down)
-        Rd_t_sim = Rd_default_sym
+    # Orientation remains constant (pointing down)
+    Rd_t_sim = Rd_default_sym
 
 
     pd_t = sp.lambdify(t, pd_t_sim, "numpy")
@@ -136,16 +140,14 @@ def get_initial_joint_config(task, xml_file, ik_class, mode=None):
     try:
         # Use deterministic random seed in test mode
         if mode == "test":
-            # np.random.seed(42)
-            q_test = np.array([-1.7649302348, 1.4444537573, -1.9586744434, 
-                               2.0937486000, 1.5705321056, 1.3857693592])
-            return q_test
+            np.random.seed(42)
+            # q_test = np.array([-1.7649302348, 1.4444537573, -1.9586744434, 
+            #                    2.0937486000, 1.5705321056, 1.3857693592])
+            # return q_test
 
-        # Get the trajectory functions which contain the default pose information
-        pd_t, Rd_t, _, _, _, _ = calculate_desired_pose_trajectory(task, 0.1)
-
-        # Default orientation
-        Rd_default = np.array(Rd_t(0.0)).reshape(3, 3)
+        # Default orientation (for sampling)
+        _, Rd_t_default, _, _, _, _ = calculate_desired_pose_trajectory(task, 0.1)
+        Rd_default = np.array(Rd_t_default(0.0)).reshape(3, 3)
 
         # Random starting position in a cylindrical region around center
         center = np.array([0.0, -0.70, 0.25])
@@ -160,6 +162,23 @@ def get_initial_joint_config(task, xml_file, ik_class, mode=None):
             z_offset,
         ])
 
+        # Randomize initial orientation around the default Rd (small rotation)
+        # Keep this local and lightweight: axis-angle with limited magnitude.
+        max_angle = np.deg2rad(60.0)
+        axis = np.random.normal(size=3)
+        axis_norm = np.linalg.norm(axis)
+        if axis_norm < 1e-12:
+            axis = np.array([1.0, 0.0, 0.0])
+        else:
+            axis = axis / axis_norm
+        angle = np.random.uniform(-max_angle, max_angle)
+        w = axis * angle
+        R_delta = expm(hat_map(w))
+        Rd_random = R_delta @ Rd_default
+
+        # Now build the trajectory functions consistent with randomized Rd
+        pd_t, Rd_t, _, _, _, _ = calculate_desired_pose_trajectory(task, 0.1, Rd_default_override=Rd_random)
+
         print(f"[INFO] Random starting position: {pd_random}, task='{task}'")
         print(
             f"[INFO] Offset from center {center}: "
@@ -168,7 +187,7 @@ def get_initial_joint_config(task, xml_file, ik_class, mode=None):
 
         # Target transform
         T_target = np.eye(4)
-        T_target[:3, :3] = Rd_default
+        T_target[:3, :3] = Rd_random
         T_target[:3, 3] = pd_random
 
         # Temporary model and IK solver

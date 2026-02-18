@@ -16,7 +16,9 @@ Usage:
     # Edit expert_pkl_name in MujocoSimulator.__init__ to control AIRL PKL export
 
 AIRL Format for Variable Admittance Control:
-    - Observations: 6D [e_t(3) + pd_t(3)] where e_t = p - pd (tracking error), pd_t = desired position
+    - Observations: 12D [e_t(3) + pd_t(3) + e_r(3) + rd_t(3)]
+        - e_t = p - pd (tracking error), pd_t = desired position
+        - e_r: rotation error (rotvec), rd_t: desired rotation (rotvec)
     - Actions: 7D [K1, K2, K3, K4, K5, K6, damping_ratio] impedance parameters
     
 Control Law:
@@ -345,7 +347,7 @@ class RobotState:
 class MujocoSimulator:
     def __init__(self, task='pih', trajectory_index=0, index_offset=0, mode=None):
         self.n = 6
-        self.xml_file = 'models/jaka_zu12/jaka_pih.xml'
+        self.xml_file = 'models/jaka_zu12/jaka_pih_case0.xml'
         self.task = task
         self.trajectory_index = trajectory_index
         
@@ -580,7 +582,7 @@ class MujocoSimulator:
                                         buf_len = self.interpolator.get_buffer_length()
                                     except Exception:
                                         buf_len = 0
-                                    if buf_len >= 2 and interpolated_data is not None and 'distance_to_hole' in interpolated_data:
+                                    if buf_len >= 1 and interpolated_data is not None and 'distance_to_hole' in interpolated_data:
                                         # Trust interpolated value when there are enough samples
                                         dist_to_hole = float(interpolated_data['distance_to_hole'])
                                     else:
@@ -883,11 +885,12 @@ class MujocoSimulator:
         
 
     def _convert_to_irl_dataset(self):
-        """Convert trajectory data to Variable Admittance Control IRL dataset format     
+        """Convert trajectory data to Variable Admittance Control IRL dataset format
+        
         Returns:
             dict: IRL dataset with observations and actions
-                observations (list): 6D observations [e_t(3) + pd_t(3)]
-                actions (list): 7D actions [K1, K2, K3, K4, K5, K6, damping_ratio] 
+                observations (list): 12D observations [e_t(3) + pd_t(3) + e_r(3) + rd_t(3)]
+                actions (list): 7D actions [K1, K2, K3, K4, K5, K6, damping_ratio]
         """
         observations = []
         actions = []
@@ -895,22 +898,35 @@ class MujocoSimulator:
         print(f"Converting {len(self.trajectory_data['time'])} trajectory points to Variable Admittance Control IRL format...")
         
         for i, t in enumerate(self.trajectory_data['time']):
-            # Get current and desired positions (only position, not orientation)
+            # Get current and desired positions
             actual_pos = np.array(self.trajectory_data['actual_pos'][i])     # p(t): Current position
             desired_pos = np.array(self.trajectory_data['desired_pos'][i])   # pd(t): Desired position
+
+            # Get current and desired rotations
+            actual_rot = np.array(self.trajectory_data['actual_rot'][i]).reshape(3, 3)    # R(t)
+            desired_rot = np.array(self.trajectory_data['desired_rot'][i]).reshape(3, 3)  # Rd(t)
             
             # =================== VARIABLE ADMITTANCE CONTROL STATE ===================
             # Tracking error: e_t = p(t) - pd(t) (actual - desired)
             tracking_error = actual_pos - desired_pos  # e_t (3D)
-            
+
             # Desired position: pd_t (3D)
             desired_position = desired_pos.copy()  # pd_t (3D)
-            
-            # =================== 6D OBSERVATION ===================
+
+            # Rotation error: e_r = Log(R * Rd^T) as rotation vector (rotvec)
+            R_err = actual_rot @ desired_rot.T
+            rot_error = self._rotation_matrix_to_axis_angle(R_err)  # e_r (3D)
+
+            # Desired rotation as rotvec for state input
+            desired_rotvec = self._rotation_matrix_to_axis_angle(desired_rot)  # rd_t (3D)
+
+            # =================== 12D OBSERVATION ===================
             observation = np.concatenate([
                 tracking_error,     # e_t (3D): actual_pos - desired_pos
-                desired_position    # pd_t (3D): desired_position
-            ])  
+                desired_position,   # pd_t (3D): desired_position
+                rot_error,          # e_r (3D)
+                desired_rotvec      # rd_t (3D)
+            ])
             
             # =================== 7D ACTION ===================
             # Extract expert impedance parameters
@@ -942,12 +958,14 @@ class MujocoSimulator:
         # Add debug information
         obs_array = np.array(observations)
         act_array = np.array(actions)
-        
+
         print(f"Variable Admittance Control Dataset Statistics:")
         print(f"Observation statistics:")
         print(f"  Shape: {obs_array.shape}")
         print(f"  Tracking error e_t range: [{obs_array[:, :3].min():.4f}, {obs_array[:, :3].max():.4f}]")
         print(f"  Desired position pd_t range: [{obs_array[:, 3:6].min():.4f}, {obs_array[:, 3:6].max():.4f}]")
+        print(f"  Rotation error e_r (rotvec) range: [{obs_array[:, 6:9].min():.4f}, {obs_array[:, 6:9].max():.4f}]")
+        print(f"  Desired rotation rd_t (rotvec) range: [{obs_array[:, 9:12].min():.4f}, {obs_array[:, 9:12].max():.4f}]")
         
         print(f"Action statistics:")
         print(f"  Shape: {act_array.shape}")
@@ -956,14 +974,14 @@ class MujocoSimulator:
         print(f"  Damping ratio range: [{act_array[:, 6].min():.3f}, {act_array[:, 6].max():.3f}]")
         
         return {
-            'observations': observations,  # 6D: [e_t(3) + pd_t(3)]
+            'observations': observations,  # 12D: [e_t(3) + pd_t(3) + e_r(3) + rd_t(3)]
             'actions': actions,           # 7D: [K1, K2, K3, K4, K5, K6, d]
             'metadata': {
-                'observation_dim': 6,
+                'observation_dim': 12,
                 'action_dim': 7,
                 'trajectory_length': len(observations),
                 'task': self.task,
-                'observation_description': 'Variable Admittance Control: [e_t(3), pd_t(3)] where e_t=p-pd, pd_t=desired_pos',
+                'observation_description': 'Variable Admittance Control: [e_t(3), pd_t(3), e_r(3), rd_t(3)] where e_t=p-pd, e_r=Log(R*Rd^T) (rotvec), rd_t=rotvec(Rd)',
                 'action_description': 'impedance_parameters: [K1, K2, K3, K4, K5, K6, damping_ratio]',
                 'error_convention': 'tracking_error: actual - desired (positive means overshoot)',
                 'control_law': 'Variable Admittance: pd_new = pd + e_admittance'

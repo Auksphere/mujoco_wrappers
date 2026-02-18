@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Plot comparison between expert and policy trajectories
-Generate two plots:
+Generate 3 plots:
 1. distance_to_hole vs stiffness_norm
 2. distance_to_hole vs damping_ratio
+3. distance_to_hole vs stiffness_Kz
 """
 
 import pandas as pd
@@ -19,9 +20,12 @@ def load_data():
     expert_file = log_dir / "trajectory_pih_expert.csv"
     policy_file = log_dir / "trajectory_pih_policy.csv"
     
+    # Ignore rows 2-7 (1-indexed, excluding header) to drop early transient samples.
+    skip_transient_rows = list(range(2, 8))
+
     try:
-        expert_data = pd.read_csv(expert_file)
-        policy_data = pd.read_csv(policy_file)
+        expert_data = pd.read_csv(expert_file, skiprows=skip_transient_rows)
+        policy_data = pd.read_csv(policy_file, skiprows=skip_transient_rows)
         print(f"Expert data shape: {expert_data.shape}")
         print(f"Policy data shape: {policy_data.shape}")
         return expert_data, policy_data
@@ -168,8 +172,7 @@ def main():
     stiffness_plot_path = results_dir / "distance_vs_stiffness_comparison.png"
     damping_plot_path = results_dir / "distance_vs_damping_comparison.png"
     Kz_plot_path = results_dir / "distance_vs_Kz_comparison.png"
-    
-    # Generate comparison plots
+
     plot_stiffness_comparison(expert_data, policy_data, stiffness_plot_path)
     
     plot_damping_comparison(expert_data, policy_data, damping_plot_path)
