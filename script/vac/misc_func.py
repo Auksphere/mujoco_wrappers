@@ -179,11 +179,11 @@ def get_initial_joint_config(task, xml_file, ik_class, mode=None):
         # Now build the trajectory functions consistent with randomized Rd
         pd_t, Rd_t, _, _, _, _ = calculate_desired_pose_trajectory(task, 0.1, Rd_default_override=Rd_random)
 
-        print(f"[INFO] Random starting position: {pd_random}, task='{task}'")
-        print(
-            f"[INFO] Offset from center {center}: "
-            f"[{pd_random[0]-center[0]:.3f}, {pd_random[1]-center[1]:.3f}, {pd_random[2]-center[2]:.3f}]"
-        )
+        # print(f"[INFO] Random starting position: {pd_random}, task='{task}'")
+        # print(
+        #     f"[INFO] Offset from center {center}: "
+        #     f"[{pd_random[0]-center[0]:.3f}, {pd_random[1]-center[1]:.3f}, {pd_random[2]-center[2]:.3f}]"
+        # )
 
         # Target transform
         T_target = np.eye(4)

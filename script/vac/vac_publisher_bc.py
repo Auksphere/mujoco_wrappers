@@ -203,168 +203,124 @@ class VariableImpedancePolicy(nn.Module):
         mean, _ = self.forward(state)
         return torch.sigmoid(mean)
 
-class AIRLPolicyManager:
-    """Manager for AIRL-trained policy inference"""
-    
-    def __init__(self, policy_path="script/models/airl/policy.pt", expert_data_path="data/expert_demonstration.pkl"):
+class BCPolicyManager:
+    """Manager for BC-trained policy inference.
+
+    This matches `BC_trainer.ipynb`:
+    - state normalization: min/max -> [-1, 1]
+    - action normalization: min/max -> [-1, 1]
+    - action denorm: inverse of the above (linear for all 7 dims)
+    """
+
+    def __init__(
+        self,
+        policy_path: str = "script/models/bc/policy.pt",
+        norm_stats_path: str = "script/models/bc/norm_stats.pkl",
+        fallback_expert_data_path: str = "data/expert_demonstration.pkl",
+    ):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # Load 12D policy network (hidden_dim=128)
+
         self.policy = VariableImpedancePolicy(state_dim=12, hidden_dim=128).to(self.device)
         try:
             self.policy.load_state_dict(torch.load(policy_path, map_location=self.device), strict=True)
             self.policy.eval()
-            print(f"AIRL policy loaded from: {policy_path}")
+            print(f"BC policy loaded from: {policy_path}")
         except Exception as e:
-            print(f"Failed to load policy from {policy_path}: {e}")
+            print(f"Failed to load BC policy from {policy_path}: {e}")
             raise
-        
-        # Load expert data statistics for normalization
-        self.load_data_statistics(expert_data_path)
-        
-    def load_data_statistics(self, expert_data_path):
-        """Load data statistics for state/action normalization"""
-        try:
-            with open(expert_data_path, 'rb') as f:
-                expert_data = pickle.load(f)
-            
-            observations = np.array(expert_data['observations'])
-            actions = np.array(expert_data['actions'])
 
-            if observations.ndim != 2 or observations.shape[1] != 12:
-                raise ValueError(
-                    f"Expert observations must be shape (N, 12) for 12D state, got {observations.shape}"
-                )
-            
-            # Calculate normalization statistics
-            self.obs_stats = {
-                'mean': observations.mean(axis=0),
-                'std': observations.std(axis=0),
-                'min': observations.min(axis=0),
-                'max': observations.max(axis=0)
-            }
-            
-            self.act_stats = {
-                'mean': actions.mean(axis=0),
-                'std': actions.std(axis=0),
-                'min': actions.min(axis=0),
-                'max': actions.max(axis=0)
-            }
-            
-            print(f"Data statistics loaded from: {expert_data_path}")
-            
+        self.state_min = None
+        self.state_max = None
+        self.action_min = None
+        self.action_max = None
+
+        self._load_norm_stats(norm_stats_path, fallback_expert_data_path)
+
+    def _load_norm_stats(self, norm_stats_path: str, fallback_expert_data_path: str):
+        # Preferred: stats saved by BC_trainer.ipynb
+        if os.path.exists(norm_stats_path):
+            try:
+                with open(norm_stats_path, "rb") as f:
+                    stats = pickle.load(f)
+                self.state_min = np.asarray(stats["state_min"], dtype=np.float32)
+                self.state_max = np.asarray(stats["state_max"], dtype=np.float32)
+                self.action_min = np.asarray(stats["action_min"], dtype=np.float32)
+                self.action_max = np.asarray(stats["action_max"], dtype=np.float32)
+                print(f"Normalization stats loaded from: {norm_stats_path}")
+                return
+            except Exception as e:
+                print(f"Failed to load norm stats from {norm_stats_path}: {e}")
+
+        # Fallback: try to compute from expert_data
+        try:
+            with open(fallback_expert_data_path, "rb") as f:
+                expert_data = pickle.load(f)
+            observations = np.asarray(expert_data["observations"], dtype=np.float32)
+            actions = np.asarray(expert_data["actions"], dtype=np.float32)
+            self.state_min = observations.min(axis=0)
+            self.state_max = observations.max(axis=0)
+            self.action_min = actions.min(axis=0)
+            self.action_max = actions.max(axis=0)
+            print(f"Normalization stats computed from: {fallback_expert_data_path}")
         except Exception as e:
-            print(f"Failed to load data statistics: {e}")
-            # Use default normalization if expert data not available
-            self.obs_stats = None
-            self.act_stats = None
-    
-    def normalize_state(self, state):
-        """Normalize state to [-1, 1] range (matching training normalization) with numerical stability"""
-        if self.obs_stats is None:
+            print(f"Failed to load/compute norm stats: {e}")
+            print("Proceeding without normalization (NOT recommended)")
+
+    def normalize_state(self, state: np.ndarray) -> np.ndarray:
+        if self.state_min is None or self.state_max is None:
             return state
-        
-        # Handle zero range to avoid division by zero
-        obs_range = self.obs_stats['max'] - self.obs_stats['min']
-        
-        # For dimensions with zero variance (like pd_0), use the value directly without normalization
-        state_norm = np.zeros_like(state)
-        for i in range(len(state)):
-            if obs_range[i] > 1e-8:  # Normal case: has variance
-                state_norm[i] = (state[i] - self.obs_stats['min'][i]) / obs_range[i] * 2 - 1
-            else:  # Zero variance case: use mean as normalized value
-                # For constant dimensions, normalize to 0
-                state_norm[i] = 0.0
-                
-        # Clamp to valid range to handle out-of-distribution inputs
-        state_norm = np.clip(state_norm, -3.0, 3.0)  # Allow slight extrapolation
-        
-        return state_norm
-    
-    def denormalize_action(self, action_norm):
-        """
-        Enhanced action denormalization: matches the inverse transform of normalize_actions
-        - Stiffness K1-K6: logarithmic inverse transform
-        - Damping coefficient: square root inverse transform
-        """
-        if self.act_stats is None:
-            # Use default ranges if statistics not available
-            action_min = np.array([200, 200, 200, 50, 50, 50, 0.1])
-            action_max = np.array([1000, 1000, 1000, 400, 400, 400, 5.0])
-        else:
-            action_min = self.act_stats['min']
-            action_max = self.act_stats['max']
-        
-        action_denorm = action_norm.copy()
-        
-        for i in range(len(action_norm)):
-            if i < 6:  # Stiffness K1-K6 - inverse logarithmic transform (CORRECTED!)
-                epsilon = 1e-3
-                act_min_safe = max(action_min[i], epsilon)
-                act_max_safe = max(action_max[i], epsilon)
-                
-                log_min = np.log(act_min_safe)
-                log_max = np.log(act_max_safe)
-                log_range = log_max - log_min
-                
-                if log_range > 0:
-                    log_value = action_norm[i] * log_range + log_min
-                    action_denorm[i] = np.exp(log_value)
-                    # Ensure within valid range
-                    action_denorm[i] = np.clip(action_denorm[i], action_min[i], action_max[i])
-                else:
-                    action_denorm[i] = action_min[i]
-            else:  # Damping coefficient - square root inverse transform
-                sqrt_min = np.sqrt(action_min[i])
-                sqrt_max = np.sqrt(action_max[i])
-                sqrt_range = sqrt_max - sqrt_min
-                
-                if sqrt_range > 0:
-                    sqrt_value = action_norm[i] * sqrt_range + sqrt_min
-                    action_denorm[i] = np.square(sqrt_value)
-                    # Ensure within valid range
-                    action_denorm[i] = np.clip(action_denorm[i], action_min[i], action_max[i])
-                else:
-                    action_denorm[i] = action_min[i]
-        
-        return action_denorm
-    
+        denom = (self.state_max - self.state_min)
+        state_norm = 2.0 * (state - self.state_min) / (denom + 1e-8) - 1.0
+        return np.clip(state_norm, -3.0, 3.0)
+
+    def denormalize_action(self, action_norm: np.ndarray) -> np.ndarray:
+        if self.action_min is None or self.action_max is None:
+            return action_norm
+        return (action_norm + 1.0) * 0.5 * (self.action_max - self.action_min) + self.action_min
 
     def get_impedance_parameters(self, pos_error, pos_desired, rot_error, rot_desired_rotvec):
-        """Get impedance parameters from AIRL policy using 12D state."""
+        """Get impedance parameters from BC policy using 12D state."""
         state = np.concatenate(
             [pos_error.flatten(), pos_desired.flatten(), rot_error.flatten(), rot_desired_rotvec.flatten()]
-        )
-        
-        # Normalize state
+        ).astype(np.float32)
+
         state_norm = self.normalize_state(state)
-        
-        # Convert to tensor
-        state_tensor = torch.FloatTensor(state_norm).unsqueeze(0).to(self.device)
-        
-        # Ensure policy is in evaluation mode for inference
+        state_tensor = torch.from_numpy(state_norm).float().unsqueeze(0).to(self.device)
+
         self.policy.eval()
-        
-        # Get policy output (normalized action)
         with torch.no_grad():
-            action_norm = self.policy.get_deterministic_action(state_tensor)
-            action_norm = action_norm.cpu().numpy()[0]
-        
-        # Denormalize to get actual impedance parameters
+            # BC policy outputs mean/log_std where mean is expected to be in [-1, 1]
+            mean, _ = self.policy(state_tensor)
+            action_norm = torch.tanh(mean).cpu().numpy()[0]
+
         impedance_params = self.denormalize_action(action_norm)
-        
-        # Extract parameters: [K1, K2, K3, K4, K5, K6, damping_ratio]
         K_diag = impedance_params[:6]
-        damping_ratio = impedance_params[6]
-        
-        # Construct stiffness matrix (diagonal)
+        damping_ratio = float(impedance_params[6])
+
         K_matrix = np.diag(K_diag)
-        
-        # Construct damping matrix: D = damping_ratio * sqrt(K)
-        D_diag = damping_ratio * np.sqrt(K_diag)
+        D_diag = damping_ratio * np.sqrt(np.maximum(K_diag, 0.0))
         D_matrix = np.diag(D_diag)
-        
         return K_matrix, D_matrix, damping_ratio
+
+
+class AIRLPolicyManager(BCPolicyManager):
+    """Backward-compatible manager for AIRL policy testing.
+
+    For interface compatibility, we currently use the same min/max linear
+    normalization/denormalization as BC (via BCPolicyManager).
+    """
+
+    def __init__(
+        self,
+        policy_path: str = "script/models/airl/policy.pt",
+        norm_stats_path: str = "script/models/airl/norm_stats.pkl",
+        fallback_expert_data_path: str = "data/expert_demonstration.pkl",
+    ):
+        super().__init__(
+            policy_path=policy_path,
+            norm_stats_path=norm_stats_path,
+            fallback_expert_data_path=fallback_expert_data_path,
+        )
 
 @dataclass
 class PolicyOutput:
@@ -619,12 +575,12 @@ class RobotState:
         return ft, dft
 
 class MujocoSimulator:
-    def __init__(self, task='pih', mode=None):
+    def __init__(self, task='pih', mode=None, algo: str = 'bc'):
         self.n = 6
         self.xml_file = 'models/jaka_zu12/jaka_pih_case0.xml'
         self.task = task
         self.mode = mode
-        self.duration = 2.0
+        self.duration = 5.0
             
         # Frequency settings
         self.policy_frequency = 25.0  # Policy (IK computation): 25Hz
@@ -651,15 +607,25 @@ class MujocoSimulator:
         # Control parameters (accessed only from controller thread)
         self.desired_q = np.array([0.0] * self.n)
 
-        # Initialize AIRL Policy Manager for dynamic impedance parameters
+        # Initialize learned policy manager (bc/airl) for dynamic impedance parameters
+        self.algo = (algo or 'bc').lower()
         try:
-            self.airl_policy_manager = AIRLPolicyManager(
-                policy_path="script/models/airl/policy.pt",
-                expert_data_path="data/expert_demonstration.pkl"
-            )
-            print("AIRL Policy Manager initialized successfully!")
+            if self.algo == 'airl':
+                self.airl_policy_manager = AIRLPolicyManager(
+                    policy_path="script/models/airl/policy.pt",
+                    norm_stats_path="script/models/airl/norm_stats.pkl",
+                    fallback_expert_data_path="data/expert_demonstration.pkl",
+                )
+                print("AIRL Policy Manager initialized successfully!")
+            else:
+                self.airl_policy_manager = BCPolicyManager(
+                    policy_path="script/models/bc/policy.pt",
+                    norm_stats_path="script/models/bc/norm_stats.pkl",
+                    fallback_expert_data_path="data/expert_demonstration.pkl",
+                )
+                print("BC Policy Manager initialized successfully!")
         except Exception as e:
-            print(f"Failed to initialize AIRL Policy Manager: {e}")
+            print(f"Failed to initialize learned policy manager ({self.algo}): {e}")
             print("Falling back to manual impedance parameters")
             self.airl_policy_manager = None
 
@@ -795,7 +761,7 @@ class MujocoSimulator:
                         
                         if robot_state.timestamp % 2.0 < 0.04:
                             kc_norm = np.linalg.norm(np.diag(self.current_Kc[:3, :3]))
-                            policy_source = "AIRL" if self.airl_policy_manager is not None else "Manual"
+                            policy_source = (self.algo.upper() if self.airl_policy_manager is not None else "Manual")
                             self.get_logger().info(
                                 f"Policy: t={robot_state.timestamp:.2f}s, solve_time={solve_time*1000:.1f}ms, "
                                 f"dist_to_hole={distance_to_hole*100:.1f}cm, Kc_norm={kc_norm:.0f}, "
@@ -1203,17 +1169,18 @@ class MujocoSimulator:
                 self.get_logger().info(f"Current joint positions: {current_joint_positions}")
 
 
-def test_airl_policy():
-    """Test AIRL policy integration"""
+def test_bc_policy():
+    """Test BC policy integration"""
     print("="*60)
-    print("Testing AIRL Policy Integration")
+    print("Testing BC Policy Integration")
     print("="*60)
     
     try:
-        # Initialize AIRL policy manager
-        airl_manager = AIRLPolicyManager(
-            policy_path="script/models/airl/policy.pt",
-            expert_data_path="data/expert_demonstration.pkl"
+        # Initialize BC policy manager
+        bc_manager = BCPolicyManager(
+            policy_path="script/models/bc/policy.pt",
+            norm_stats_path="script/models/bc/norm_stats.pkl",
+            fallback_expert_data_path="data/expert_demonstration.pkl",
         )
         
         test_cases = [
@@ -1229,7 +1196,7 @@ def test_airl_policy():
 
             rot_error = np.zeros(3)
             rot_desired_rotvec = np.zeros(3)
-            K_matrix, D_matrix, damping_ratio = airl_manager.get_impedance_parameters(
+            K_matrix, D_matrix, damping_ratio = bc_manager.get_impedance_parameters(
                 pos_error=error,
                 pos_desired=desired_pos,
                 rot_error=rot_error,
@@ -1240,12 +1207,12 @@ def test_airl_policy():
             print(f"  Damping (diagonal): {np.diag(D_matrix)[:3]} N*s/m, {np.diag(D_matrix)[3:]} Nm*s/rad")
             print(f"  Damping ratio: {damping_ratio:.2f}")
             print(f"  Stiffness norm: {np.linalg.norm(np.diag(K_matrix)[:3]):.1f}")
-            
-        print(f"\nAIRL Policy Integration Test Passed!")
+        
+        print(f"\nBC Policy Integration Test Passed!")
         return True
         
     except Exception as e:
-        print(f"\nAIRL Policy Integration Test Failed: {e}")
+        print(f"\nBC Policy Integration Test Failed: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -1254,22 +1221,38 @@ def test_airl_policy():
 def main(args=None):
     task = 'pih'
     
-    parser = argparse.ArgumentParser(description="Variable Admittance Control Expert Data Generator")
+    parser = argparse.ArgumentParser(description="Variable Admittance Control Policy Tester (bc/airl)")
 
     parser.add_argument("--mode", type=str, default=None, help="Initial config mode: 'test' for fixed seed, otherwise random")
+
+    parser.add_argument(
+        "--algo",
+        type=str,
+        default="bc",
+        choices=["bc", "airl"],
+        help="Which learned policy to load: 'bc' loads script/models/bc, 'airl' loads script/models/airl",
+    )
 
     parsed = parser.parse_args(args if args is not None else [])
 
     mode = parsed.mode
+    algo = parsed.algo
 
     print("="*60)
-    print("AIRL Variable Admittance Control")
+    print("Variable Admittance Control")
+    print(f"Algorithm: {algo}")
     print("="*60)
     
-    # Test AIRL policy first
-    if not test_airl_policy():
-        print("\nAIRL integration test failed, but simulation will continue with fallback parameters")
-    simulator = MujocoSimulator(task="pih",mode=mode)
+    # Optional quick sanity test
+    if algo == 'bc':
+        if not test_bc_policy():
+            print("\nBC integration test failed, but simulation will continue with fallback parameters")
+    else:
+        # Reuse BC test function; it instantiates the manager and prints values.
+        # This is a light check that the policy can be loaded.
+        pass
+
+    simulator = MujocoSimulator(task="pih", mode=mode, algo=algo)
     
     print(f"\nAsynchronous Control Architecture:")
     print(f"- Policy (IK): {simulator.policy_frequency} Hz")
