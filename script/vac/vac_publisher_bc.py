@@ -302,26 +302,6 @@ class BCPolicyManager:
         D_matrix = np.diag(D_diag)
         return K_matrix, D_matrix, damping_ratio
 
-
-class AIRLPolicyManager(BCPolicyManager):
-    """Backward-compatible manager for AIRL policy testing.
-
-    For interface compatibility, we currently use the same min/max linear
-    normalization/denormalization as BC (via BCPolicyManager).
-    """
-
-    def __init__(
-        self,
-        policy_path: str = "script/models/airl/policy.pt",
-        norm_stats_path: str = "script/models/airl/norm_stats.pkl",
-        fallback_expert_data_path: str = "data/expert_demonstration.pkl",
-    ):
-        super().__init__(
-            policy_path=policy_path,
-            norm_stats_path=norm_stats_path,
-            fallback_expert_data_path=fallback_expert_data_path,
-        )
-
 @dataclass
 class PolicyOutput:
     """Data structure for policy (IK computation) output"""
@@ -575,7 +555,7 @@ class RobotState:
         return ft, dft
 
 class MujocoSimulator:
-    def __init__(self, task='pih', mode=None, algo: str = 'bc'):
+    def __init__(self, task='pih', mode=None):
         self.n = 6
         self.xml_file = 'models/jaka_zu12/jaka_pih_case0.xml'
         self.task = task
@@ -607,25 +587,16 @@ class MujocoSimulator:
         # Control parameters (accessed only from controller thread)
         self.desired_q = np.array([0.0] * self.n)
 
-        # Initialize learned policy manager (bc/airl) for dynamic impedance parameters
-        self.algo = (algo or 'bc').lower()
+        # Initialize BC Policy Manager for dynamic impedance parameters
         try:
-            if self.algo == 'airl':
-                self.airl_policy_manager = AIRLPolicyManager(
-                    policy_path="script/models/airl/policy.pt",
-                    norm_stats_path="script/models/airl/norm_stats.pkl",
-                    fallback_expert_data_path="data/expert_demonstration.pkl",
-                )
-                print("AIRL Policy Manager initialized successfully!")
-            else:
-                self.airl_policy_manager = BCPolicyManager(
-                    policy_path="script/models/bc/policy.pt",
-                    norm_stats_path="script/models/bc/norm_stats.pkl",
-                    fallback_expert_data_path="data/expert_demonstration.pkl",
-                )
-                print("BC Policy Manager initialized successfully!")
+            self.airl_policy_manager = BCPolicyManager(
+                policy_path="script/models/bc/policy.pt",
+                norm_stats_path="script/models/bc/norm_stats.pkl",
+                fallback_expert_data_path="data/expert_demonstration.pkl",
+            )
+            print("BC Policy Manager initialized successfully!")
         except Exception as e:
-            print(f"Failed to initialize learned policy manager ({self.algo}): {e}")
+            print(f"Failed to initialize BC Policy Manager: {e}")
             print("Falling back to manual impedance parameters")
             self.airl_policy_manager = None
 
@@ -761,7 +732,7 @@ class MujocoSimulator:
                         
                         if robot_state.timestamp % 2.0 < 0.04:
                             kc_norm = np.linalg.norm(np.diag(self.current_Kc[:3, :3]))
-                            policy_source = (self.algo.upper() if self.airl_policy_manager is not None else "Manual")
+                            policy_source = "AIRL" if self.airl_policy_manager is not None else "Manual"
                             self.get_logger().info(
                                 f"Policy: t={robot_state.timestamp:.2f}s, solve_time={solve_time*1000:.1f}ms, "
                                 f"dist_to_hole={distance_to_hole*100:.1f}cm, Kc_norm={kc_norm:.0f}, "
@@ -1221,38 +1192,22 @@ def test_bc_policy():
 def main(args=None):
     task = 'pih'
     
-    parser = argparse.ArgumentParser(description="Variable Admittance Control Policy Tester (bc/airl)")
+    parser = argparse.ArgumentParser(description="Variable Admittance Control Expert Data Generator")
 
     parser.add_argument("--mode", type=str, default=None, help="Initial config mode: 'test' for fixed seed, otherwise random")
-
-    parser.add_argument(
-        "--algo",
-        type=str,
-        default="bc",
-        choices=["bc", "airl"],
-        help="Which learned policy to load: 'bc' loads script/models/bc, 'airl' loads script/models/airl",
-    )
 
     parsed = parser.parse_args(args if args is not None else [])
 
     mode = parsed.mode
-    algo = parsed.algo
 
     print("="*60)
-    print("Variable Admittance Control")
-    print(f"Algorithm: {algo}")
+    print("BC Variable Admittance Control")
     print("="*60)
     
-    # Optional quick sanity test
-    if algo == 'bc':
-        if not test_bc_policy():
-            print("\nBC integration test failed, but simulation will continue with fallback parameters")
-    else:
-        # Reuse BC test function; it instantiates the manager and prints values.
-        # This is a light check that the policy can be loaded.
-        pass
-
-    simulator = MujocoSimulator(task="pih", mode=mode, algo=algo)
+    # Test BC policy first
+    if not test_bc_policy():
+        print("\nBC integration test failed, but simulation will continue with fallback parameters")
+    simulator = MujocoSimulator(task="pih",mode=mode)
     
     print(f"\nAsynchronous Control Architecture:")
     print(f"- Policy (IK): {simulator.policy_frequency} Hz")
