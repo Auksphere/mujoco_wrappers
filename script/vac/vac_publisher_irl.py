@@ -1,38 +1,5 @@
 #!/usr/bin/env python3
 """
-Variable Admittance Control Expert Data Generator with AIRL PKL Export
-
-This script generates expert trajectory data for the peg-in-hole task using
-adaptive stiffness variable admittance control. It outputs AIRL-compatible 
-PKL format for Adversarial Inverse Reinforcement Learning.
-
-Usage:
-    # Interactive mode
-    python vac_expert_generator.py
-    
-    # Command line mode (specify task)
-    python vac_expert_generator.py pih
-    
-    # Edit expert_pkl_name in MujocoSimulator.__init__ to control AIRL PKL export
-
-AIRL Format for Variable Admittance Control:
-    - Observations: 12D [e_t(3) + pd_t(3) + e_r(3) + rd_t(3)]
-        - e_t = p - pd (tracking error), pd_t = desired position
-        - e_r: rotation error (rotvec), rd_t: desired rotation (rotvec)
-    - Actions: 7D [K1, K2, K3, K4, K5, K6, damping_ratio] impedance parameters
-    
-Control Law:
-    - Variable Admittance: pd_new = pd + e_admittance
-    - Admittance Dynamics: M*e'' + B*e' + K*e = F_external
-    - Damping: B = damping_ratio * sqrt(K)
-    
-Configuration:
-    - To enable AIRL PKL export: Set expert_pkl_name = 'your_filename.pkl' in MujocoSimulator.__init__
-    - To disable AIRL PKL export: Set expert_pkl_name = None in MujocoSimulator.__init__
-    
-Author: GitHub Copilot
-"""
-"""
 Asynchronous Admittance Control with Decoupled Policy and Controller Threads
 
 Key Features:
@@ -54,12 +21,15 @@ import mujoco.viewer
 import time
 import numpy as np
 import sys
-import argparse
 import os
 import threading
+import argparse
 import queue
 from dataclasses import dataclass
 from typing import Optional, Tuple
+import torch
+import torch.nn as nn
+import pickle
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__))))
 from misc_func import calculate_desired_pose_trajectory, vee_map, hat_map, adjoint_g_ed, adjoint_g_ed_dual, adjoint_g
@@ -86,6 +56,338 @@ sys.modules['controllers.ik_arm'] = ik_arm_module
 spec.loader.exec_module(ik_arm_module)
 IKArm = ik_arm_module.IKArm
 
+class VariableImpedancePolicy(nn.Module):
+    """
+    Simplified and optimized policy network for impedance learning
+    Input: [e_t, pd_t, e_r, rd_t] (12D) - pos error, desired pos, rot error, desired rotvec
+    Output: [K1, K2, K3, K4, K5, K6, d_t] (7D) - impedance parameters (normalized to [0,1])
+    
+    Key improvements:
+    1. Simpler dual-encoder architecture
+    2. Focused feature processing 
+    3. Better parameter initialization
+    4. Enhanced stability mechanisms
+    """
+    def __init__(self, state_dim=12, action_dim=7, hidden_dim=128):
+        super(VariableImpedancePolicy, self).__init__()
+        
+        self.error_encoder = nn.Sequential(
+            nn.Linear(3, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+        
+        self.position_encoder = nn.Sequential(
+            nn.Linear(3, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+
+        self.rot_error_encoder = nn.Sequential(
+            nn.Linear(3, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+
+        self.rot_desired_encoder = nn.Sequential(
+            nn.Linear(3, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+        
+        # Simplified shared processing
+        self.shared_net = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.15),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU()
+        )
+        
+        # Focused stiffness branch
+        self.stiffness_branch = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 12)  # 6 * 2 for mean and log_std
+        )
+        
+        # Enhanced damping branch with better exploration
+        self.damping_branch = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 4, 2)  # mean and log_std for damping
+        )
+        
+        # Improved initialization
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """Enhanced weight initialization for better learning dynamics"""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                # Xavier initialization with custom gain
+                nn.init.xavier_uniform_(module.weight, gain=0.8)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+        
+        # Special initialization for output layers
+        with torch.no_grad():
+            # Stiffness branch - encourage moderate initial values
+            self.stiffness_branch[-1].weight.data *= 0.5
+            self.stiffness_branch[-1].bias.data[:6] = 0.3   # mean
+            self.stiffness_branch[-1].bias.data[6:] = -0.7  # log_std
+            
+            # Damping branch - better exploration initialization
+            self.damping_branch[-1].weight.data *= 0.7
+            self.damping_branch[-1].bias.data[0] = 0.2      # mean
+            self.damping_branch[-1].bias.data[1] = -0.5     # log_std
+    
+    def forward(self, state):
+        """Optimized forward pass with stability improvements"""
+        # Set to evaluation mode for inference
+        self.eval()
+        
+        # Input validation and cleanup
+        if torch.isnan(state).any():
+            state = torch.where(torch.isnan(state), torch.zeros_like(state), state)
+        
+        # Split and encode input: [pos_err(3), pos_des(3), rot_err(3), rot_des(3)]
+        pos_error = state[:, 0:3]
+        pos_desired = state[:, 3:6]
+        rot_error = state[:, 6:9]
+        rot_desired = state[:, 9:12]
+
+        pos_error_features = self.error_encoder(pos_error)
+        pos_desired_features = self.position_encoder(pos_desired)
+        rot_error_features = self.rot_error_encoder(rot_error)
+        rot_desired_features = self.rot_desired_encoder(rot_desired)
+        
+        # Combine features
+        combined_features = torch.cat(
+            [pos_error_features, pos_desired_features, rot_error_features, rot_desired_features],
+            dim=-1,
+        )
+        shared_features = self.shared_net(combined_features)
+        
+        # Generate outputs
+        stiffness_output = self.stiffness_branch(shared_features)
+        damping_output = self.damping_branch(shared_features)
+        
+        # Parse parameters
+        stiffness_mean = stiffness_output[:, :6]
+        stiffness_log_std = stiffness_output[:, 6:]
+        damping_mean = damping_output[:, 0:1]
+        damping_log_std = damping_output[:, 1:2]
+        
+        # Combine and clamp for stability
+        mean = torch.cat([stiffness_mean, damping_mean], dim=-1)
+        log_std = torch.cat([stiffness_log_std, damping_log_std], dim=-1)
+        
+        # Conservative clamping for numerical stability
+        mean = torch.clamp(mean, min=-2.5, max=2.5)
+        log_std = torch.clamp(log_std, min=-1.0, max=0.5)
+        
+        # Final NaN check
+        if torch.isnan(mean).any() or torch.isnan(log_std).any():
+            print("ERROR: NaN detected in policy output, using safe values")
+            mean = torch.zeros_like(mean)
+            log_std = torch.ones_like(log_std) * (-1.0)
+        
+        return mean, log_std
+    
+    def get_deterministic_action(self, state):
+        """Get deterministic action (mean) for evaluation"""
+        mean, _ = self.forward(state)
+        return torch.tanh(mean)
+
+
+class SimpleGaussianActor(nn.Module):
+    """SAC-style Gaussian actor used by the new MaxEnt IRL + SAC trainer.
+
+    This class is intentionally aligned to the saved `policy.pt` state_dict keys:
+      - net.0 / net.2 (2-layer MLP)
+      - mean
+      - log_std
+
+    Deterministic action uses tanh(mean) -> [-1, 1].
+    """
+
+    def __init__(self, state_dim: int = 12, action_dim: int = 7, hidden_dim: int = 256):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+        )
+        self.mean = nn.Linear(hidden_dim, action_dim)
+        self.log_std = nn.Linear(hidden_dim, action_dim)
+
+    def forward(self, state: torch.Tensor):
+        h = self.net(state)
+        mean = self.mean(h)
+        log_std = self.log_std(h)
+        log_std = torch.clamp(log_std, -5.0, 2.0)
+        return mean, log_std
+
+    def get_deterministic_action(self, state: torch.Tensor) -> torch.Tensor:
+        mean, _ = self.forward(state)
+        return torch.tanh(mean)
+
+
+class IRLPolicyManager:
+    """
+    Manager for IRL-trained policy inference.
+    """
+
+    def __init__(
+        self,
+        policy_path: str = "script/models/irl/policy.pt",
+        norm_stats_path: str = "script/models/irl/norm_stats.pkl",
+        fallback_expert_data_path: str = "data/expert_demonstration.pkl",
+        state_dim: int = 12,
+        action_dim: int = 7,
+        hidden_dim: int = 256,
+    ):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # The current MaxEnt IRL + SAC trainer exports a SAC-style Gaussian actor
+        # with keys: net.*, mean.*, log_std.* (hidden_dim=256 by default).
+        self.policy = SimpleGaussianActor(state_dim=state_dim, action_dim=action_dim, hidden_dim=hidden_dim).to(self.device)
+        try:
+            self.policy.load_state_dict(torch.load(policy_path, map_location=self.device), strict=True)
+            self.policy.eval()
+            print(f"IRL policy loaded from: {policy_path}")
+        except Exception as e:
+            print(f"Failed to load IRL policy from {policy_path}: {e}")
+            raise
+
+        self.obs_stats = None
+        self.act_stats = None
+
+        # Prefer explicit norm_stats.pkl (same as BC pipeline)
+        if os.path.exists(norm_stats_path):
+            try:
+                with open(norm_stats_path, "rb") as f:
+                    stats = pickle.load(f)
+
+                self.obs_stats = {
+                    "min": np.asarray(stats["state_min"], dtype=np.float64),
+                    "max": np.asarray(stats["state_max"], dtype=np.float64),
+                }
+                self.act_stats = {
+                    "min": np.asarray(stats["action_min"], dtype=np.float64),
+                    "max": np.asarray(stats["action_max"], dtype=np.float64),
+                }
+
+                if self.obs_stats["min"].shape != (state_dim,) or self.obs_stats["max"].shape != (state_dim,):
+                    raise ValueError(
+                        f"norm_stats state ranges must be shape ({state_dim},), got {self.obs_stats['min'].shape}"
+                    )
+                if self.act_stats["min"].shape != (action_dim,) or self.act_stats["max"].shape != (action_dim,):
+                    raise ValueError(
+                        f"norm_stats action ranges must be shape ({action_dim},), got {self.act_stats['min'].shape}"
+                    )
+
+                print(f"IRL norm stats loaded from: {norm_stats_path}")
+            except Exception as e:
+                print(f"Failed to load IRL norm stats from {norm_stats_path}: {e}")
+                self.obs_stats = None
+                self.act_stats = None
+
+        # Fallback: compute stats from expert dataset (best-effort)
+        if self.obs_stats is None or self.act_stats is None:
+            self._load_stats_from_expert(fallback_expert_data_path, state_dim=state_dim, action_dim=action_dim)
+
+    def _load_stats_from_expert(self, expert_data_path: str, state_dim: int, action_dim: int) -> None:
+        try:
+            with open(expert_data_path, "rb") as f:
+                expert_data = pickle.load(f)
+
+            observations = np.asarray(expert_data.get("observations"), dtype=np.float64)
+            actions = np.asarray(expert_data.get("actions"), dtype=np.float64)
+            if observations.ndim != 2 or observations.shape[1] != state_dim:
+                raise ValueError(f"Expert observations must be shape (N, {state_dim}), got {observations.shape}")
+            if actions.ndim != 2 or actions.shape[1] != action_dim:
+                raise ValueError(f"Expert actions must be shape (N, {action_dim}), got {actions.shape}")
+
+            self.obs_stats = {"min": observations.min(axis=0), "max": observations.max(axis=0)}
+            self.act_stats = {"min": actions.min(axis=0), "max": actions.max(axis=0)}
+            print(f"IRL stats computed from expert data: {expert_data_path}")
+        except Exception as e:
+            print(f"Failed to load stats from expert data ({expert_data_path}): {e}")
+            self.obs_stats = None
+            self.act_stats = None
+
+    def normalize_state(self, state: np.ndarray) -> np.ndarray:
+        """Normalize state to [-1, 1] with safe handling for zero-range dims."""
+        state = np.asarray(state, dtype=np.float64)
+        if self.obs_stats is None:
+            return state
+
+        smin = self.obs_stats["min"]
+        smax = self.obs_stats["max"]
+        denom = smax - smin
+        out = np.zeros_like(state)
+
+        for i in range(state.shape[0]):
+            if denom[i] > 1e-8:
+                out[i] = (state[i] - smin[i]) / denom[i] * 2.0 - 1.0
+            else:
+                out[i] = 0.0
+
+        return np.clip(out, -3.0, 3.0)
+
+    def denormalize_action(self, action_norm: np.ndarray) -> np.ndarray:
+        """Inverse of linear min/max -> [-1,1] normalization for all 7 dims."""
+        action_norm = np.asarray(action_norm, dtype=np.float64)
+        if self.act_stats is None:
+            # Conservative defaults if stats are missing
+            action_min = np.array([200, 200, 200, 50, 50, 50, 0.1], dtype=np.float64)
+            action_max = np.array([1000, 1000, 1000, 400, 400, 400, 5.0], dtype=np.float64)
+        else:
+            action_min = self.act_stats["min"]
+            action_max = self.act_stats["max"]
+
+        # [-1,1] -> [0,1]
+        t = (action_norm + 1.0) * 0.5
+        t = np.clip(t, 0.0, 1.0)
+        return action_min + t * (action_max - action_min)
+
+    def get_impedance_parameters(self, pos_error, pos_desired, rot_error, rot_desired_rotvec):
+        """Get impedance parameters from IRL policy using 12D state."""
+        state = np.concatenate(
+            [pos_error.flatten(), pos_desired.flatten(), rot_error.flatten(), rot_desired_rotvec.flatten()]
+        )
+        state_norm = self.normalize_state(state)
+        state_tensor = torch.tensor(state_norm, dtype=torch.float32, device=self.device).unsqueeze(0)
+
+        self.policy.eval()
+        with torch.no_grad():
+            # IRL/PPO training uses tanh action in [-1,1]. However, this publisher's policy
+            # network returns sigmoid(mean) by default (historical). We support both safely:
+            action_out = self.policy.get_deterministic_action(state_tensor).cpu().numpy()[0]
+
+        # If output seems in [0,1], map it to [-1,1] to match denorm expectation.
+        if float(action_out.min()) >= 0.0 and float(action_out.max()) <= 1.0:
+            action_norm = action_out * 2.0 - 1.0
+        else:
+            action_norm = np.clip(action_out, -1.0, 1.0)
+
+        impedance_params = self.denormalize_action(action_norm)
+
+        K_diag = impedance_params[:6]
+        damping_ratio = float(impedance_params[6])
+
+        K_matrix = np.diag(K_diag)
+        D_diag = damping_ratio * np.sqrt(np.maximum(K_diag, 1e-6))
+        D_matrix = np.diag(D_diag)
+
+        return K_matrix, D_matrix, damping_ratio
+
 @dataclass
 class PolicyOutput:
     """Data structure for policy (IK computation) output"""
@@ -97,7 +399,6 @@ class PolicyOutput:
     distance_to_hole: float
     stiffness_norm: float
     transition_factor: float
-    damping_ratio: float  # Add damping ratio to policy output
     success: bool
 
 @dataclass
@@ -161,8 +462,7 @@ class LinearInterpolator:
                     'x_admittance': sample.x_admittance.copy(),
                     'distance_to_hole': sample.distance_to_hole,
                     'stiffness_norm': sample.stiffness_norm,
-                    'transition_factor': sample.transition_factor,
-                    'damping_ratio': sample.damping_ratio
+                    'transition_factor': sample.transition_factor
                 }
                 
             # Find interpolation interval
@@ -176,8 +476,7 @@ class LinearInterpolator:
                     'x_admittance': sample.x_admittance.copy(),
                     'distance_to_hole': sample.distance_to_hole,
                     'stiffness_norm': sample.stiffness_norm,
-                    'transition_factor': sample.transition_factor,
-                    'damping_ratio': sample.damping_ratio
+                    'transition_factor': sample.transition_factor
                 }
             elif target_time >= times[-1]:
                 sample = self.buffer[-1] 
@@ -187,8 +486,7 @@ class LinearInterpolator:
                     'x_admittance': sample.x_admittance.copy(),
                     'distance_to_hole': sample.distance_to_hole,
                     'stiffness_norm': sample.stiffness_norm,
-                    'transition_factor': sample.transition_factor,
-                    'damping_ratio': sample.damping_ratio
+                    'transition_factor': sample.transition_factor
                 }
             else:
                 # Linear interpolation between two samples
@@ -214,7 +512,6 @@ class LinearInterpolator:
                 dist_interp = (1 - alpha) * sample1.distance_to_hole + alpha * sample2.distance_to_hole
                 stiff_interp = (1 - alpha) * sample1.stiffness_norm + alpha * sample2.stiffness_norm
                 trans_interp = (1 - alpha) * sample1.transition_factor + alpha * sample2.transition_factor
-                damp_interp = (1 - alpha) * sample1.damping_ratio + alpha * sample2.damping_ratio
                 
                 # SLERP for rotation matrices
                 R_interp = self._slerp_rotation(sample1.Rd_modified, sample2.Rd_modified, alpha)
@@ -225,14 +522,8 @@ class LinearInterpolator:
                     'x_admittance': x_interp,
                     'distance_to_hole': dist_interp,
                     'stiffness_norm': stiff_interp,
-                    'transition_factor': trans_interp,
-                    'damping_ratio': damp_interp
+                    'transition_factor': trans_interp
                 }
-
-    def get_buffer_length(self) -> int:
-        """Return the current number of samples in the interpolator buffer (thread-safe)."""
-        with self.lock:
-            return len(self.buffer)
                 
     def _slerp_rotation(self, R1, R2, t):
         """Spherical linear interpolation for rotation matrices"""
@@ -242,6 +533,11 @@ class LinearInterpolator:
         key_times = [0, 1]
         slerp = Slerp(key_times, key_rots)
         return slerp(t).as_matrix()
+    
+    def get_buffer_length(self) -> int:
+        """Return the current number of samples in the interpolator buffer (thread-safe)."""
+        with self.lock:
+            return len(self.buffer)
 
 class RobotState:
     def __init__(self, model, data, ee_name, robot_name):
@@ -345,16 +641,11 @@ class RobotState:
         return ft, dft
 
 class MujocoSimulator:
-    def __init__(self, task='pih', trajectory_index=0, index_offset=0, mode=None):
+    def __init__(self, task='pih', mode=None):
         self.n = 6
         self.xml_file = 'models/jaka_zu12/jaka_pih_case0.xml'
         self.task = task
-        self.trajectory_index = trajectory_index
-        
-        # Generate unique PKL filename for each trajectory
-        self.expert_pkl_name = f'expert_{task}_{trajectory_index+index_offset}.pkl'
-        
-
+        self.mode = mode
         self.duration = 5.0
             
         # Frequency settings
@@ -379,21 +670,35 @@ class MujocoSimulator:
         self.time_lock = threading.Lock()
         self.paused = False
 
+        # Control parameters (accessed only from controller thread)
         self.desired_q = np.array([0.0] * self.n)
 
-        # Admittance control parameters (used in policy thread)
-        self.d_far = 0.1
-        self.d_near = 5.0
-        self.d = self.d_far 
+        # Initialize IRL Policy Manager for dynamic impedance parameters
+        try:
+            self.irl_policy_manager = IRLPolicyManager(
+                policy_path="script/models/irl/policy.pt",
+                norm_stats_path="script/models/irl/norm_stats.pkl",
+                fallback_expert_data_path="data/expert_demonstration.pkl",
+            )
+            print("IRL Policy Manager initialized successfully!")
+        except Exception as e:
+            print(f"Failed to initialize IRL Policy Manager: {e}")
+            print("Falling back to manual impedance parameters")
+            self.irl_policy_manager = None
+
+        self.d = 0.5
+        self.Mc = np.diag([20.0, 20.0, 20.0, 5, 5, 5])
         
-        self.Mc = np.diag([200.0, 200.0, 200.0, 50, 50, 50])
-        
-        # Adaptive Kc parameters
-        self.Kc_far = np.diag([1000.0, 1000.0, 800.0, 1000.0, 1000.0, 1000.0])
-        self.Kc_near = np.diag([200.0, 200.0, 1500.0, 200.0, 200.0, 200.0])  
+        self.Kc_far = np.diag([1000.0, 1000.0, 1000.0, 400.0, 400.0, 400.0])
+        self.Kc_near = np.diag([200.0, 200.0, 200.0, 50.0, 50.0, 50.0])
         self.Kc = self.Kc_far.copy()  
-        self.distance_threshold = 0.05  # 5cm threshold
-        self.hole_position = np.array([0.0, -0.7, 0.12])  
+        self.distance_threshold = 0.05 
+        
+        self.current_Kc = self.Kc_far.copy()
+        self.current_Dc = self.current_Kc * self.d
+        self.current_damping_ratio = self.d  
+        
+        self.hole_position = np.array([0.0, -0.7, 0.12])
         
         self.Dc = self.Kc * self.d
 
@@ -402,28 +707,28 @@ class MujocoSimulator:
         self.ddx_admittance = np.zeros(6)
         self.admittance_lock = threading.Lock()
 
-        # Trajectory recording
         self.trajectory_data = {
             'time': [], 'desired_pos': [], 'actual_pos': [], 'modified_pos': [],
             'desired_rot': [], 'actual_rot': [], 'modified_rot': [],
             'force': [], 'admittance_displacement': [], 'joint_angles': [],
-            'distance_to_hole': [], 'stiffness_norm': [], 'transition_factor': [],
-            'damping_ratio': [],
+            'distance_to_hole': [], 'stiffness_norm': [], 'transition_factor': [], 'damping_ratio': [],
             'K1': [], 'K2': [], 'K3': [], 'K4': [], 'K5': [], 'K6': []
         }
         
+        # Store latest robot state for data recording
         self.latest_robot_state = None
 
+        # Initialize trajectory functions
         self.pd_t, self.Rd_t, self.dpd_t, self.dRd_t, self.ddpd_t, self.ddRd_t = calculate_desired_pose_trajectory(self.task, self.duration)
-        # Use shared helper in misc_func for initial configuration
         from misc_func import get_initial_joint_config
         self.initial_q = get_initial_joint_config(self.task, self.xml_file, IKArm, mode)
-        
+
         self.model = None
         self.data = None
         self.robot_state = None
         self.ik_solver = None
         self.previous_q = None
+
 
     def policy_thread_worker(self):
         """Policy thread running at 25Hz - computes IK from Cartesian targets"""
@@ -459,13 +764,10 @@ class MujocoSimulator:
                         # Position error (translation)
                         pos_error = robot_state.current_position - pd_current
                         
-                        # For rotation error, use a simplified approach
-                        # error_6d = np.concatenate([pos_error, np.zeros(3)])  # Simplified without rotation
+                        error_6d = np.concatenate([pos_error, np.zeros(3)])
                         
-                        # Force/torque wrench
                         external_wrench = robot_state.force_torque
                         if len(external_wrench) != 6:
-                            self.get_logger().warn(f"Unexpected force/torque shape: {external_wrench.shape}, resizing")
                             if len(external_wrench) > 6:
                                 external_wrench = external_wrench[:6]
                             else:
@@ -473,32 +775,32 @@ class MujocoSimulator:
                         
                         wrench_6d = external_wrench
                         
-                        # Update adaptive stiffness based on peg-hole distance
-                        distance_to_hole, transition_factor = self.update_adaptive_stiffness(robot_state.current_position)
+                        distance_to_hole, transition_factor = self.update_adaptive_stiffness(
+                            robot_state.current_position,
+                            current_rotation=robot_state.current_rotation,
+                            desired_rotation=Rd_current,
+                        )
                         
-                        # Admittance dynamics update
                         self.ddx_admittance = np.linalg.solve(self.Mc, 
-                            wrench_6d - self.Dc @ self.dx_admittance - self.Kc @ self.x_admittance)
+                            wrench_6d - self.current_Dc @ self.dx_admittance - self.current_Kc @ self.x_admittance)
                         
-                        self.dx_admittance += self.ddx_admittance * 0.04  # dt = 0.04s for 25Hz
+                        self.dx_admittance += self.ddx_admittance * 0.04
                         self.x_admittance += self.dx_admittance * 0.04
                         
-                        # Apply admittance to desired pose (only position for now)
                         pd_modified = pd_current + self.x_admittance[:3]
-                        Rd_modified = Rd_current  # Keep original orientation for simplicity
+                        Rd_modified = Rd_current
                         
                         # Create target transform
                         Tep = np.eye(4)
                         Tep[:3, :3] = Rd_modified
                         Tep[:3, 3] = pd_modified
                     
-                    # Solve IK using snapshot data 
+                    # Solve IK using snapshot data
                     q_sol, success, iterations, error, jl_valid, solve_time = self.ik_solver.solve_ik_from_snapshot(
                         self.model, Tep, robot_state.q, robot_state.jacobian
                     )
                     
                     if success:
-                        # Create policy output with timestamp
                         kc_norm = np.linalg.norm(np.diag(self.Kc[:3, :3]))
                         policy_output = PolicyOutput(
                             timestamp=robot_state.timestamp,
@@ -509,19 +811,18 @@ class MujocoSimulator:
                             distance_to_hole=distance_to_hole,
                             stiffness_norm=kc_norm,
                             transition_factor=transition_factor,
-                            damping_ratio=self.d,  # Include current adaptive damping
                             success=True
                         )
                         
                         self.interpolator.add_sample(policy_output)
                         
                         if robot_state.timestamp % 2.0 < 0.04:
-                            # Get current stiffness for logging
-                            kc_norm = np.linalg.norm(np.diag(self.Kc[:3, :3]))
+                            kc_norm = np.linalg.norm(np.diag(self.current_Kc[:3, :3]))
+                            policy_source = "IRL" if self.irl_policy_manager is not None else "Manual"
                             self.get_logger().info(
                                 f"Policy: t={robot_state.timestamp:.2f}s, solve_time={solve_time*1000:.1f}ms, "
                                 f"dist_to_hole={distance_to_hole*100:.1f}cm, Kc_norm={kc_norm:.0f}, "
-                                f"transition={transition_factor:.2f}"
+                                f"transition={transition_factor:.2f}, source={policy_source}"
                             )
                     else:
                         self.get_logger().warn(f"IK failed at t={robot_state.timestamp:.3f}s")
@@ -531,7 +832,7 @@ class MujocoSimulator:
                 
             # Maintain frequency
             elapsed = time.time() - loop_start
-            sleep_time = max(0, 0.04 - elapsed) 
+            sleep_time = max(0, 0.04 - elapsed)  # 25Hz = 0.04s
             if sleep_time > 0:
                 time.sleep(sleep_time)
                 
@@ -553,20 +854,16 @@ class MujocoSimulator:
                     interpolated_q, interpolated_data = self.interpolator.interpolate(current_time)
                     
                     if interpolated_q is not None:
-                        # Apply filtering for smooth control
                         alpha = 0.8
                         self.desired_q = alpha * interpolated_q + (1 - alpha) * self.desired_q
-
                         
-                        # Record data (at reduced frequency)
+                        # Record data
                         if current_time % 0.08 < 0.008 and interpolated_data is not None:
                             try:
                                 if hasattr(self, 'latest_robot_state') and self.latest_robot_state is not None:
-                                    # Get desired trajectory at current time
                                     pd_desired = self.pd_t(current_time).reshape(-1)
                                     Rd_desired = self.Rd_t(current_time)
                                     
-                                    # Record trajectory data
                                     self.trajectory_data['time'].append(current_time)
                                     self.trajectory_data['desired_pos'].append(pd_desired.tolist())
                                     self.trajectory_data['actual_pos'].append(self.latest_robot_state.current_position.tolist())
@@ -577,43 +874,39 @@ class MujocoSimulator:
                                     self.trajectory_data['force'].append(self.latest_robot_state.force_torque.tolist())
                                     self.trajectory_data['admittance_displacement'].append(interpolated_data['x_admittance'].tolist())
                                     self.trajectory_data['joint_angles'].append(self.desired_q.tolist())
-
                                     try:
                                         buf_len = self.interpolator.get_buffer_length()
                                     except Exception:
                                         buf_len = 0
+
                                     if buf_len >= 1 and interpolated_data is not None and 'distance_to_hole' in interpolated_data:
                                         # Trust interpolated value when there are enough samples
                                         dist_to_hole = float(interpolated_data['distance_to_hole'])
                                     else:
+                                        # Fallback: compute from main-thread robot snapshot (latest position)
                                         try:
                                             dist_to_hole = float(np.linalg.norm(self.latest_robot_state.current_position - self.hole_position))
                                         except Exception:
+                                            # Last resort: use whatever interpolated value is available or zero
                                             dist_to_hole = interpolated_data.get('distance_to_hole') if interpolated_data is not None else 0.0
 
                                     self.trajectory_data['distance_to_hole'].append(dist_to_hole)
                                     self.trajectory_data['stiffness_norm'].append(interpolated_data['stiffness_norm'])
                                     self.trajectory_data['transition_factor'].append(interpolated_data['transition_factor'])
-                                    self.trajectory_data['damping_ratio'].append(interpolated_data['damping_ratio'])
+                                    self.trajectory_data['damping_ratio'].append(self.current_damping_ratio)
 
-                                    # Compute and record per-axis stiffness (K1-K6). If interpolated transition factor
-                                    # is available, reconstruct K diag from near/far presets; otherwise use current Kc.
+                                    # Record per-axis stiffness K1..K6. Prefer current_Kc if available (policy output),
+                                    # otherwise fall back to controller's Kc diagonal.
                                     try:
-                                        tf = interpolated_data.get('transition_factor', None)
+                                        K_diag = np.diag(self.current_Kc)
                                     except Exception:
-                                        tf = None
-
-                                    if tf is not None:
-                                        Kc_far_diag = np.diag(self.Kc_far)
-                                        Kc_near_diag = np.diag(self.Kc_near)
-                                        K_diag = tf * Kc_far_diag + (1.0 - tf) * Kc_near_diag
-                                    else:
-                                        K_diag = np.diag(self.Kc)
+                                        try:
+                                            K_diag = np.diag(self.Kc)
+                                        except Exception:
+                                            K_diag = np.zeros(6)
 
                                     for k_idx in range(6):
                                         self.trajectory_data[f'K{k_idx+1}'].append(float(K_diag[k_idx]))
-                                    
-                                    self.get_logger().debug(f"Controller: t={current_time:.3f}s, data recorded")
                                     
                             except Exception as e:
                                 self.get_logger().error(f"Data recording error: {e}")
@@ -623,7 +916,7 @@ class MujocoSimulator:
                 
             # Maintain frequency
             elapsed = time.time() - loop_start
-            sleep_time = max(0, 0.008 - elapsed) 
+            sleep_time = max(0, 0.008 - elapsed)  # 125Hz = 0.008s
             if sleep_time > 0:
                 time.sleep(sleep_time)
                 
@@ -642,36 +935,72 @@ class MujocoSimulator:
                 pass  # Skip debug messages
         return SimpleLogger()
 
-    def update_adaptive_stiffness(self, peg_position):
-        """Update Kc and d based on distance between peg and hole"""
-        # Calculate distance between peg and hole
+    def update_adaptive_stiffness(self, peg_position, current_rotation=None, desired_rotation=None):
+        """Update Kc and Dc using IRL policy or fallback to distance-based method"""
         distance_to_hole = np.linalg.norm(peg_position - self.hole_position)
-        transition_sharpness = 50.0  # Controls how sharp the transition is
+        
+        if self.irl_policy_manager is not None:
+            try:
+                current_time = self.current_time if hasattr(self, 'current_time') else 0.0
+                pd_current = np.array(self.pd_t(current_time)).flatten()
+                pos_error = peg_position - pd_current
+
+                # Rotation terms (use safe fallbacks if not provided)
+                if current_rotation is None:
+                    current_rotation = np.eye(3)
+                if desired_rotation is None:
+                    desired_rotation = np.eye(3)
+
+                # rot_error = rotvec(R_actual * R_desired^T)
+                R_err = current_rotation @ desired_rotation.T
+                rot_error = ScipyRotation.from_matrix(R_err).as_rotvec()
+                rot_desired_rotvec = ScipyRotation.from_matrix(desired_rotation).as_rotvec()
+
+                Kc_policy, Dc_policy, damping_ratio = self.irl_policy_manager.get_impedance_parameters(
+                    pos_error=pos_error,
+                    pos_desired=pd_current,
+                    rot_error=rot_error,
+                    rot_desired_rotvec=rot_desired_rotvec,
+                )
+                
+                self.current_Kc = Kc_policy
+                self.current_Dc = Dc_policy
+                self.current_damping_ratio = damping_ratio
+                self.Kc = Kc_policy
+                self.Dc = Dc_policy
+                
+                transition_sharpness = 50.0
+                transition_factor = 1.0 / (1.0 + np.exp(-transition_sharpness * (distance_to_hole - self.distance_threshold)))
+                
+                return distance_to_hole, transition_factor
+                
+            except Exception as e:
+                self.get_logger().error(f"IRL policy error: {e}, falling back to manual control")
+        
+        # Fallback: manual distance-based adaptive stiffness
+        transition_sharpness = 50.0
         transition_factor = 1.0 / (1.0 + np.exp(-transition_sharpness * (distance_to_hole - self.distance_threshold)))
         
-        # Interpolate between near and far stiffness
         self.Kc = transition_factor * self.Kc_far + (1.0 - transition_factor) * self.Kc_near
-        
-        # Interpolate between near and far damping (opposite trend to stiffness)
-        self.d = transition_factor * self.d_far + (1.0 - transition_factor) * self.d_near
-        
-        # Update damping coefficient accordingly
         self.Dc = self.Kc * self.d
+        
+        self.current_Kc = self.Kc
+        self.current_Dc = self.Dc
+        self.current_damping_ratio = self.d  # Use default damping ratio for fallback
         
         return distance_to_hole, transition_factor
 
     def update_admittance_dynamics(self, Fe, dt):
-        """Update admittance dynamics"""
+        """Update admittance dynamics using current impedance parameters"""
         if Fe.ndim > 1:
             Fe = Fe.flatten()
         
         Mc_inv = np.linalg.inv(self.Mc)
-        self.ddx_admittance = Mc_inv @ (Fe - self.Dc @ self.dx_admittance - self.Kc @ self.x_admittance)
+        self.ddx_admittance = Mc_inv @ (Fe - self.current_Dc @ self.dx_admittance - self.current_Kc @ self.x_admittance)
         
         self.dx_admittance += self.ddx_admittance * dt
         self.x_admittance += self.dx_admittance * dt
         
-        # Apply limits
         max_translation = 0.1
         max_rotation = 0.2
         
@@ -697,11 +1026,13 @@ class MujocoSimulator:
 
     def MujocoSim(self):
         """Asynchronous simulation with policy and controller threads"""
+        # Initialize MuJoCo
         self.model = mujoco.MjModel.from_xml_path(self.xml_file)
         self.data = mujoco.MjData(self.model)
         self.model.opt.timestep = 0.001  
         self.model.opt.iterations = 300    
         self.model.opt.tolerance = 1e-6  
+        # self.model.opt.solver = mujoco.mjtSolver.mjSOL_PGS  # PGS is faster than Newton
 
         self.robot_state = RobotState(self.model, self.data, "jaka_end_effector", "jaka")
         self.ik_solver = IKArm(solver_type='QP', tol=1e-5, ilimit=10000)
@@ -723,15 +1054,15 @@ class MujocoSimulator:
             x_admittance=np.zeros(6),
             distance_to_hole=initial_distance,
             stiffness_norm=np.linalg.norm(np.diag(self.Kc_far[:3, :3])),
-            transition_factor=1.0,  
-            damping_ratio=self.d_far, 
+            transition_factor=1.0,  # Start far, so use high stiffness
             success=True
         )
         self.interpolator.add_sample(initial_policy_output)
         
         with self.time_lock:
             self.current_time = 0.0
-
+        
+        # Start threads
         self.simulation_running = True
         self.policy_running = True
         self.controller_running = True
@@ -745,14 +1076,22 @@ class MujocoSimulator:
         self.get_logger().info(f"Starting simulation for {self.duration}s")
         self.get_logger().info(f"Policy: {self.policy_frequency}Hz, Controller: {self.controller_frequency}Hz")
         
+        # Log IRL integration status
+        if self.irl_policy_manager is not None:
+            self.get_logger().info("IRL Policy Integration: ACTIVE - Using learned impedance parameters")
+        else:
+            self.get_logger().info("IRL Policy Integration: INACTIVE - Using manual impedance parameters")
+        
+        # Main simulation loop - non-blocking
         with mujoco.viewer.launch_passive(self.model, self.data, key_callback=self.key_callback) as viewer:
             last_policy_snapshot_time = 0.0
-            policy_snapshot_period = 0.04
+            policy_snapshot_period = 0.04  # 25Hz for policy thread
             
             while viewer.is_running() and self.current_time < self.duration:
                 step_start = time.time()
 
                 if not self.paused:
+                    # Apply control commands from controller thread
                     if hasattr(self, 'desired_q') and self.desired_q is not None:
                         self.data.ctrl[:] = self.desired_q
                     
@@ -785,6 +1124,7 @@ class MujocoSimulator:
                             
                             # Get force/torque sensor data
                             if len(self.data.sensordata) >= 6:
+                                # Use the first 6 values as force/torque (fx, fy, fz, tx, ty, tz)
                                 force_torque = self.data.sensordata[:6].copy()
                             else:
                                 # No sensor data available, use zeros
@@ -809,6 +1149,7 @@ class MujocoSimulator:
                             last_policy_snapshot_time = current_time_local
                             
                         except queue.Full:
+                            # Queue full, skip this snapshot
                             pass
                         except Exception as e:
                             self.get_logger().error(f"Snapshot creation error: {e}")
@@ -819,7 +1160,7 @@ class MujocoSimulator:
                 if sleep_time > 0:
                     time.sleep(sleep_time)
             
-        self.get_logger().info("Simulation finished, stopping threads...")
+        self.get_logger().info("Simulation finished")
         self.simulation_running = False
         self.policy_running = False
         self.controller_running = False
@@ -830,20 +1171,16 @@ class MujocoSimulator:
             self.controller_thread.join(timeout=1.0)
             
         self.get_logger().info("All threads stopped")
-        self.save_trajectory_data(expert_pkl_name=getattr(self, 'expert_pkl_name', None))
+        self.save_trajectory_data()
 
-    def save_trajectory_data(self, expert_pkl_name=None):
+    def save_trajectory_data(self):
         """Save trajectory data to files"""
-        import pickle
         import csv
-        
-        data_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
         log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
-        os.makedirs(data_dir, exist_ok=True)
         os.makedirs(log_dir, exist_ok=True)
         
         # Generate unique CSV filename with trajectory index
-        csv_file = os.path.join(log_dir, f'trajectory_{self.task}_expert.csv')
+        csv_file = os.path.join(log_dir, f'trajectory_{self.task}_policy.csv')
         with open(csv_file, 'w', newline='') as f:
             writer = csv.writer(f)
             header = ['time', 'desired_x', 'desired_y', 'desired_z',
@@ -852,7 +1189,6 @@ class MujocoSimulator:
                      'force_x', 'force_y', 'force_z', 'torque_x', 'torque_y', 'torque_z',
                      'adm_disp_x', 'adm_disp_y', 'adm_disp_z', 'adm_disp_rx', 'adm_disp_ry', 'adm_disp_rz',
                      'distance_to_hole', 'stiffness_norm', 'transition_factor', 'damping_ratio']
-            # Add per-axis stiffness columns
             header.extend([f'K{i+1}' for i in range(6)])
             header.extend([f'joint_{i+1}' for i in range(self.n)])
             writer.writerow(header)
@@ -867,8 +1203,7 @@ class MujocoSimulator:
                 row.append(self.trajectory_data['distance_to_hole'][i])
                 row.append(self.trajectory_data['stiffness_norm'][i])
                 row.append(self.trajectory_data['transition_factor'][i])
-                row.append(self.trajectory_data['damping_ratio'][i])  # Add damping ratio to CSV
-                # Append per-axis stiffness values K1..K6
+                row.append(self.trajectory_data['damping_ratio'][i])
                 for k_idx in range(6):
                     row.append(self.trajectory_data.get(f'K{k_idx+1}', [0]*len(self.trajectory_data['time']))[i])
                 row.extend(self.trajectory_data['joint_angles'][i])
@@ -876,147 +1211,6 @@ class MujocoSimulator:
         
         self.get_logger().info(f"CSV trajectory data saved to: {csv_file}")
 
-        if expert_pkl_name:
-            expert_data = self._convert_to_irl_dataset()
-            expert_pkl_file = os.path.join(data_dir, expert_pkl_name)
-            with open(expert_pkl_file, 'wb') as f:
-                pickle.dump(expert_data, f)
-            self.get_logger().info(f"IRL expert dataset saved to: {expert_pkl_file}")
-        
-
-    def _convert_to_irl_dataset(self):
-        """Convert trajectory data to Variable Admittance Control IRL dataset format
-        
-        Returns:
-            dict: IRL dataset with observations and actions
-                observations (list): 12D observations [e_t(3) + pd_t(3) + e_r(3) + rd_t(3)]
-                actions (list): 7D actions [K1, K2, K3, K4, K5, K6, damping_ratio]
-        """
-        observations = []
-        actions = []
-        
-        print(f"Converting {len(self.trajectory_data['time'])} trajectory points to Variable Admittance Control IRL format...")
-        
-        for i, t in enumerate(self.trajectory_data['time']):
-            # Get current and desired positions
-            actual_pos = np.array(self.trajectory_data['actual_pos'][i])     # p(t): Current position
-            desired_pos = np.array(self.trajectory_data['desired_pos'][i])   # pd(t): Desired position
-
-            # Get current and desired rotations
-            actual_rot = np.array(self.trajectory_data['actual_rot'][i]).reshape(3, 3)    # R(t)
-            desired_rot = np.array(self.trajectory_data['desired_rot'][i]).reshape(3, 3)  # Rd(t)
-            
-            # =================== VARIABLE ADMITTANCE CONTROL STATE ===================
-            # Tracking error: e_t = p(t) - pd(t) (actual - desired)
-            tracking_error = actual_pos - desired_pos  # e_t (3D)
-
-            # Desired position: pd_t (3D)
-            desired_position = desired_pos.copy()  # pd_t (3D)
-
-            # Rotation error: e_r = Log(R * Rd^T) as rotation vector (rotvec)
-            R_err = actual_rot @ desired_rot.T
-            rot_error = self._rotation_matrix_to_axis_angle(R_err)  # e_r (3D)
-
-            # Desired rotation as rotvec for state input
-            desired_rotvec = self._rotation_matrix_to_axis_angle(desired_rot)  # rd_t (3D)
-
-            # =================== 12D OBSERVATION ===================
-            observation = np.concatenate([
-                tracking_error,     # e_t (3D): actual_pos - desired_pos
-                desired_position,   # pd_t (3D): desired_position
-                rot_error,          # e_r (3D)
-                desired_rotvec      # rd_t (3D)
-            ])
-            
-            # =================== 7D ACTION ===================
-            # Extract expert impedance parameters.
-            # Prefer using the recorded per-axis stiffness values K1..K6 that come directly
-            # from the controller (this avoids any hard-coded ranges here).
-            transition_factor = float(self.trajectory_data['transition_factor'][i])
-
-            has_recorded_k = all(f'K{k+1}' in self.trajectory_data for k in range(6))
-            if has_recorded_k and len(self.trajectory_data['K1']) > i:
-                try:
-                    K1 = float(self.trajectory_data['K1'][i])
-                    K2 = float(self.trajectory_data['K2'][i])
-                    K3 = float(self.trajectory_data['K3'][i])
-                    K4 = float(self.trajectory_data['K4'][i])
-                    K5 = float(self.trajectory_data['K5'][i])
-                    K6 = float(self.trajectory_data['K6'][i])
-                except Exception:
-                    has_recorded_k = False
-
-            if not has_recorded_k:
-                # Fallback: derive from simulator parameters (non-hardcoded).
-                # This assumes the expert stiffness is interpolated between Kc_far and Kc_near.
-                Kc_far_diag = np.diag(self.Kc_far).astype(float)
-                Kc_near_diag = np.diag(self.Kc_near).astype(float)
-                expert_stiffness = transition_factor * Kc_far_diag + (1.0 - transition_factor) * Kc_near_diag
-                K1, K2, K3, K4, K5, K6 = [float(x) for x in expert_stiffness]
-
-            # Get the actual adaptive damping ratio used by the expert at this time point
-            expert_damping = float(self.trajectory_data['damping_ratio'][i])
-            
-            # 7D action: [K1, K2, K3, K4, K5, K6, damping_ratio]
-            action = np.array([K1, K2, K3, K4, K5, K6, expert_damping])
-            
-            observations.append(observation.tolist())
-            actions.append(action.tolist())
-        
-        # Add debug information
-        obs_array = np.array(observations)
-        act_array = np.array(actions)
-
-        print(f"Variable Admittance Control Dataset Statistics:")
-        print(f"Observation statistics:")
-        print(f"  Shape: {obs_array.shape}")
-        print(f"  Tracking error e_t range: [{obs_array[:, :3].min():.4f}, {obs_array[:, :3].max():.4f}]")
-        print(f"  Desired position pd_t range: [{obs_array[:, 3:6].min():.4f}, {obs_array[:, 3:6].max():.4f}]")
-        print(f"  Rotation error e_r (rotvec) range: [{obs_array[:, 6:9].min():.4f}, {obs_array[:, 6:9].max():.4f}]")
-        print(f"  Desired rotation rd_t (rotvec) range: [{obs_array[:, 9:12].min():.4f}, {obs_array[:, 9:12].max():.4f}]")
-        
-        print(f"Action statistics:")
-        print(f"  Shape: {act_array.shape}")
-        print(f"  K1-K3 (position) range: [{act_array[:, :3].min():.1f}, {act_array[:, :3].max():.1f}]")
-        print(f"  K4-K6 (rotation) range: [{act_array[:, 3:6].min():.1f}, {act_array[:, 3:6].max():.1f}]")
-        print(f"  Damping ratio range: [{act_array[:, 6].min():.3f}, {act_array[:, 6].max():.3f}]")
-        
-        return {
-            'observations': observations,  # 12D: [e_t(3) + pd_t(3) + e_r(3) + rd_t(3)]
-            'actions': actions,           # 7D: [K1, K2, K3, K4, K5, K6, d]
-            'metadata': {
-                'observation_dim': 12,
-                'action_dim': 7,
-                'trajectory_length': len(observations),
-                'task': self.task,
-                'observation_description': 'Variable Admittance Control: [e_t(3), pd_t(3), e_r(3), rd_t(3)] where e_t=p-pd, e_r=Log(R*Rd^T) (rotvec), rd_t=rotvec(Rd)',
-                'action_description': 'impedance_parameters: [K1, K2, K3, K4, K5, K6, damping_ratio]',
-                'error_convention': 'tracking_error: actual - desired (positive means overshoot)',
-                'control_law': 'Variable Admittance: pd_new = pd + e_admittance'
-            }
-        }
-    
-    def _rotation_matrix_to_axis_angle(self, R):
-        """Convert rotation matrix to axis-angle representation"""
-        try:
-            from scipy.spatial.transform import Rotation as ScipyRotation
-            r = ScipyRotation.from_matrix(R)
-            return r.as_rotvec()
-        except:
-            # Fallback implementation
-            angle = np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))
-            if np.sin(angle) == 0:
-                return np.zeros(3)
-            axis = np.array([R[2,1] - R[1,2], R[0,2] - R[2,0], R[1,0] - R[0,1]]) / (2 * np.sin(angle))
-            return axis * angle
-    
-    def _rotation_matrix_derivative_to_angular_velocity(self, R, dR):
-        """Convert rotation matrix derivative to angular velocity"""
-        # Angular velocity: ω = 2 * trace(dR * R^T) where the result is skew-symmetric
-        # Extract the vector from the skew-symmetric matrix
-        omega_hat = dR @ R.T
-        return np.array([omega_hat[2,1], omega_hat[0,2], omega_hat[1,0]])
-        
     def key_callback(self, keycode):
         """Key callback for simulation control"""
         if chr(keycode) == ' ':
@@ -1032,51 +1226,86 @@ class MujocoSimulator:
                 self.get_logger().info(f"Current joint positions: {current_joint_positions}")
 
 
+def test_irl_policy():
+    """Test IRL policy integration (load + forward + impedance construction)."""
+    print("="*60)
+    print("Testing IRL Policy Integration")
+    print("="*60)
+    
+    try:
+        # Initialize IRL policy manager
+        irl_manager = IRLPolicyManager(
+            policy_path="script/models/irl/policy.pt",
+            norm_stats_path="script/models/irl/norm_stats.pkl",
+            fallback_expert_data_path="data/expert_demonstration.pkl",
+        )
+        
+        test_cases = [
+            (np.array([0.01, 0.02, -0.01]), np.array([0.0, -0.7, 0.35])),
+            (np.array([0.05, -0.03, 0.02]), np.array([0.0, -0.7, 0.23])),
+            (np.array([0.001, 0.001, -0.001]), np.array([0.0, -0.7, 0.12])),
+        ]
+        
+        for i, (error, desired_pos) in enumerate(test_cases):
+            print(f"\nTest case {i+1}:")
+            print(f"  Tracking error: {error}")
+            print(f"  Desired position: {desired_pos}")
+
+            rot_error = np.zeros(3)
+            rot_desired_rotvec = np.zeros(3)
+            K_matrix, D_matrix, damping_ratio = irl_manager.get_impedance_parameters(
+                pos_error=error,
+                pos_desired=desired_pos,
+                rot_error=rot_error,
+                rot_desired_rotvec=rot_desired_rotvec,
+            )
+            
+            print(f"  Stiffness (diagonal): {np.diag(K_matrix)[:3]} N/m, {np.diag(K_matrix)[3:]} Nm/rad")
+            print(f"  Damping (diagonal): {np.diag(D_matrix)[:3]} N*s/m, {np.diag(D_matrix)[3:]} Nm*s/rad")
+            print(f"  Damping ratio: {damping_ratio:.2f}")
+            print(f"  Stiffness norm: {np.linalg.norm(np.diag(K_matrix)[:3]):.1f}")
+            
+        print(f"\nIRL Policy Integration Test Passed!")
+        return True
+        
+    except Exception as e:
+        print(f"\nIRL Policy Integration Test Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main(args=None):
+    task = 'pih'
+    
     parser = argparse.ArgumentParser(description="Variable Admittance Control Expert Data Generator")
 
     parser.add_argument("--mode", type=str, default=None, help="Initial config mode: 'test' for fixed seed, otherwise random")
 
     parsed = parser.parse_args(args if args is not None else [])
 
-    task = "pih"
-    
-    index_offset = 72
     mode = parsed.mode
-    if mode == 'test':
-        num_trajectories = 1
-    else:
-        num_trajectories = 1
 
-    print(f"\n=== Generating {num_trajectories} trajectory(s) for task '{task}' (mode={mode}) ===")
+    print("="*60)
+    print("IRL Variable Admittance Control")
+    print("="*60)
     
-    for trajectory_idx in range(num_trajectories):
-        print(f"\n--- Trajectory {trajectory_idx + 1}/{num_trajectories} ---")
-        
-        # Create simulator with unique PKL filename for each trajectory
-        simulator = MujocoSimulator(task=task, trajectory_index=trajectory_idx, index_offset=index_offset, mode=mode)
-        
-        print(f"- Policy (IK): {simulator.policy_frequency} Hz")
-        print(f"- Controller: {simulator.controller_frequency} Hz") 
-        print(f"- Task: {task}")
-        print(f"- Trajectory Index: {trajectory_idx + 1}")
-        
-        if simulator.expert_pkl_name:
-            print(f"- IRL PKL Export: {simulator.expert_pkl_name}")
-        else:
-            print("- IRL PKL Export: Disabled")
-        
-        print("- Press Space to Pause/Resume during simulation")
-        
-        try:
-            simulator.MujocoSim()
-            print(f"✓ Trajectory {trajectory_idx + 1} completed successfully")
-        except KeyboardInterrupt:
-            print(f"✗ Trajectory {trajectory_idx + 1} interrupted by user")
-            break
-        except Exception as e:
-            print(f"✗ Trajectory {trajectory_idx + 1} failed: {e}")
-            continue
+    # Test IRL policy first
+    if not test_irl_policy():
+        print("\nIRL integration test failed, but simulation will continue with fallback parameters")
+    simulator = MujocoSimulator(task="pih",mode=mode)
+    
+    print(f"\nAsynchronous Control Architecture:")
+    print(f"- Policy (IK): {simulator.policy_frequency} Hz")
+    print(f"- Controller: {simulator.controller_frequency} Hz") 
+    print("- Simulation: Continuous, non-blocking")
+    print("- Impedance Control: IRL-Enhanced Variable Admittance")
+    print("\nControls: Space = Pause/Resume")
+
+    try:
+        simulator.MujocoSim()
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == '__main__':

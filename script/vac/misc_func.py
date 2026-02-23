@@ -22,7 +22,7 @@ def hat_map(w):
     )
     return w_hat
 
-def calculate_desired_pose_trajectory(task, duration = 10.0, Rd_default_override=None):
+def calculate_desired_pose_trajectory(task, duration = 5.0, Rd_default_override=None):
     """
     Defines the symbolic trajectory for the end-effector based on task type.
     
@@ -76,10 +76,10 @@ def calculate_desired_pose_trajectory(task, duration = 10.0, Rd_default_override
     elif task == 'pih':
         # Define key waypoints for two-phase trajectory
         start_position = pd_default_sym  
-        hole_entrance = sp.Matrix([0, -0.702, 0.17])  
+        hole_entrance = sp.Matrix([0, -0.701544, 0.17])  
         hole_target = sp.Matrix([0, -0.7, 0.12]) 
         
-        t_transition = 0.5 * max_time  # Transition time between phases
+        t_transition = 0.4 * max_time  # Transition time between phases
 
         phase_weight = sp.tanh(10 * (t - t_transition))  # Smooth transition around t_transition
         phase_weight = (phase_weight + 1) / 2  # Map from [-1,1] to [0,1]
@@ -140,10 +140,10 @@ def get_initial_joint_config(task, xml_file, ik_class, mode=None):
     try:
         # Use deterministic random seed in test mode
         if mode == "test":
-            np.random.seed(42)
-            # q_test = np.array([-1.7649302348, 1.4444537573, -1.9586744434, 
-            #                    2.0937486000, 1.5705321056, 1.3857693592])
-            # return q_test
+            # np.random.seed(42)
+            q_test = np.array([-1.7649302348, 1.4444537573, -1.9586744434, 
+                               2.0937486000, 1.5705321056, 1.3857693592])
+            return q_test
 
         # Default orientation (for sampling)
         _, Rd_t_default, _, _, _, _ = calculate_desired_pose_trajectory(task, 0.1)

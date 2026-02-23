@@ -20,7 +20,7 @@
             <joint axis="0 1 0" range="-6.28319 6.28319" armature="0.1" damping="1" limited="true"/>
             <position ctrlrange="-6.2831 6.2831"/>
             <general biastype="affine" ctrlrange="-6.2831 6.2831" gainprm="5000" biasprm="0 -5000 -500"/>
-            <geom contype='1' conaffinity='1' condim='6' margin="0.002" solref=".02 1" solimp=".95 .95 .001" friction="0.3"/>
+            <geom contype='1' conaffinity='1' condim='6' margin="0.0000001" solref=".02 1" solimp=".95 .95 .001" friction="0.3"/>
         </default>
     </default>
 
@@ -119,11 +119,11 @@
                                                 <!-- End effector visual and collision geometry using STL file -->
                                                 <geom name="peg_base" type="cylinder" size="0.035 0.004" 
                                                     rgba="0.2 0.2 0.2 1" contype="1" conaffinity="0" group="1"/>
-                                                <geom name="peg" type="box" size="0.0075 0.0075 0.05" 
-                                                    rgba="0.2 0.2 0.2 1" friction="0.8" contype='1'  condim='6' 
-                                                    solimp="0.99 0.99 0.001" solref="0.001 1" />
-                                                <!-- End effector inertial properties (from CAD) -->
-                                                <inertial pos="0 0 -0.00449" mass="0.06104" diaginertia="4.6157e-5 4.6325e-5 6.5702e-5"/>
+                                                <geom name="peg" type="box" size="0.0092 0.0092 0.05" 
+                                                    rgba="0.2 0.2 0.2 1" friction="0.001 0.001 0.001" contype='1'  
+                                                    solimp="0.9 0.95 0.001 0.5 2" solref="0.02 1"/>
+                                                
+                                                <inertial pos="0 0 0" mass="0.6" diaginertia="4.6157 4.6325 6.5702"/>
 
                                                 
                                             </body>
@@ -148,11 +148,11 @@
 
         <!-- hole -->
         <body name="base" pos="0 -0.7 0.1" euler="-0.5236 0.0000 0">
-            <geom name="base" type="box" mass="0.1" pos="0 0 0.01" size="0.1 0.1 0.01" contype="1" condim="6" />
-            <geom name="hole1" type="box" mass="0.1" pos="0.055 -0.045 0.04" size="0.045 0.055 0.02" contype="1" condim="6"/>
-            <geom name="hole2" type="box" mass="0.1" pos="-0.055 0.045 0.04" size="0.045 0.055 0.02" contype="1" condim="6"/>
-            <geom name="hole3" type="box" mass="0.1" pos="0.045 0.055 0.04" size="0.055 0.045 0.02" contype="1" condim="6"/>
-            <geom name="hole4" type="box" mass="0.1" pos="-0.045 -0.055 0.04" size="0.055 0.045 0.02" contype="1" condim="6"/>
+            <geom name="base" type="box" mass="0.1" pos="0 0 0.01" size="0.1 0.1 0.01" contype="1" />
+            <geom name="hole1" type="box" mass="0.1" pos="0.055 -0.045 0.04" size="0.045 0.055 0.02" contype="1" condim="3"/>
+            <geom name="hole2" type="box" mass="0.1" pos="-0.055 0.045 0.04" size="0.045 0.055 0.02" contype="1" condim="3"/>
+            <geom name="hole3" type="box" mass="0.1" pos="0.045 0.055 0.04" size="0.055 0.045 0.02" contype="1" condim="3"/>
+            <geom name="hole4" type="box" mass="0.1" pos="-0.045 -0.055 0.04" size="0.055 0.045 0.02" contype="1" condim="3" />
         </body>
 
     </worldbody>

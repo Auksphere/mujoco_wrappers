@@ -188,7 +188,7 @@ class VariableImpedancePolicy(nn.Module):
         
         # Conservative clamping for numerical stability
         mean = torch.clamp(mean, min=-2.5, max=2.5)
-        log_std = torch.clamp(log_std, min=-1.0, max=0.5)
+        log_std = torch.clamp(log_std, min=-2, max=2)
         
         # Final NaN check
         if torch.isnan(mean).any() or torch.isnan(log_std).any():
@@ -201,7 +201,21 @@ class VariableImpedancePolicy(nn.Module):
     def get_deterministic_action(self, state):
         """Get deterministic action (mean) for evaluation"""
         mean, _ = self.forward(state)
-        return torch.sigmoid(mean)
+        return torch.tanh(mean)
+    
+    def sample_action(self, state, std_scale: float = 1.0):
+        """
+        Stochastic action in [-1, 1] using reparameterization trick.
+        std_scale can be >1 to increase exploration online.
+        """
+        mean, log_std = self.forward(state)
+        std = torch.exp(log_std) * float(std_scale)
+        std = torch.clamp(std, min=0.05, max=3.0)
+
+        dist = torch.normal(mean, std)
+        z = dist.rsample()
+        action = torch.tanh(z)
+        return action
 
 class AIRLPolicyManager:
     """Manager for AIRL-trained policy inference"""
@@ -287,6 +301,12 @@ class AIRLPolicyManager:
         - Stiffness K1-K6: logarithmic inverse transform
         - Damping coefficient: square root inverse transform
         """
+        # Policy outputs are tanh-squashed to [-1, 1].
+        # The inverse transforms below expect a unit interval parameterization, so we
+        # map [-1, 1] -> [0, 1] first to match training-time normalization.
+        action_unit = (np.asarray(action_norm, dtype=np.float64) + 1.0) * 0.5
+        action_unit = np.clip(action_unit, 0.0, 1.0)
+
         if self.act_stats is None:
             # Use default ranges if statistics not available
             action_min = np.array([200, 200, 200, 50, 50, 50, 0.1])
@@ -295,9 +315,9 @@ class AIRLPolicyManager:
             action_min = self.act_stats['min']
             action_max = self.act_stats['max']
         
-        action_denorm = action_norm.copy()
+        action_denorm = action_unit.copy()
         
-        for i in range(len(action_norm)):
+        for i in range(len(action_unit)):
             if i < 6:  # Stiffness K1-K6 - inverse logarithmic transform (CORRECTED!)
                 epsilon = 1e-3
                 act_min_safe = max(action_min[i], epsilon)
@@ -308,7 +328,7 @@ class AIRLPolicyManager:
                 log_range = log_max - log_min
                 
                 if log_range > 0:
-                    log_value = action_norm[i] * log_range + log_min
+                    log_value = action_unit[i] * log_range + log_min
                     action_denorm[i] = np.exp(log_value)
                     # Ensure within valid range
                     action_denorm[i] = np.clip(action_denorm[i], action_min[i], action_max[i])
@@ -320,7 +340,7 @@ class AIRLPolicyManager:
                 sqrt_range = sqrt_max - sqrt_min
                 
                 if sqrt_range > 0:
-                    sqrt_value = action_norm[i] * sqrt_range + sqrt_min
+                    sqrt_value = action_unit[i] * sqrt_range + sqrt_min
                     action_denorm[i] = np.square(sqrt_value)
                     # Ensure within valid range
                     action_denorm[i] = np.clip(action_denorm[i], action_min[i], action_max[i])

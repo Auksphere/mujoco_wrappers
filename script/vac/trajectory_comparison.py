@@ -21,7 +21,7 @@ def load_data():
     policy_file = log_dir / "trajectory_pih_policy.csv"
     
     # Ignore rows 2-7 (1-indexed, excluding header) to drop early transient samples.
-    skip_transient_rows = list(range(1, 6))
+    skip_transient_rows = list(range(1, 7))
 
     try:
         expert_data = pd.read_csv(expert_file, skiprows=skip_transient_rows)
