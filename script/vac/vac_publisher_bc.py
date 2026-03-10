@@ -25,6 +25,7 @@ import os
 import threading
 import argparse
 import queue
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional, Tuple
 import torch
@@ -41,6 +42,7 @@ from scipy.spatial.transform import Slerp
 # Add project root to Python path to allow importing from 'controllers'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__))))
+from hyperparams import get_vac_hyperparams
 import importlib.util
 
 # First load util module
@@ -560,7 +562,12 @@ class MujocoSimulator:
         self.xml_file = 'models/jaka_zu12/jaka_pih_case0.xml'
         self.task = task
         self.mode = mode
-        self.duration = 5.0
+        self.vac_cfg = get_vac_hyperparams()
+        self.duration = float(self.vac_cfg['duration_sec'])
+        self.success_xy_threshold = float(self.vac_cfg['success_xy_threshold'])
+        self.success_z_threshold = float(self.vac_cfg['success_z_threshold'])
+        self.insertion_success = False
+        self.termination_reason = "time_limit"
             
         # Frequency settings
         self.policy_frequency = 25.0  # Policy (IK computation): 25Hz
@@ -600,19 +607,19 @@ class MujocoSimulator:
             print("Falling back to manual impedance parameters")
             self.airl_policy_manager = None
 
-        self.d = 0.5
-        self.Mc = np.diag([20.0, 20.0, 20.0, 5, 5, 5])
+        self.d = float(self.vac_cfg['d_default'])
+        self.Mc = self.vac_cfg['Mc'].copy()
         
-        self.Kc_far = np.diag([1000.0, 1000.0, 1000.0, 400.0, 400.0, 400.0])
-        self.Kc_near = np.diag([200.0, 200.0, 200.0, 50.0, 50.0, 50.0])
+        self.Kc_far = self.vac_cfg['Kc_far'].copy()
+        self.Kc_near = self.vac_cfg['Kc_near'].copy()
         self.Kc = self.Kc_far.copy()  
-        self.distance_threshold = 0.05 
+        self.distance_threshold = float(self.vac_cfg['distance_threshold'])
         
         self.current_Kc = self.Kc_far.copy()
         self.current_Dc = self.current_Kc * self.d
         self.current_damping_ratio = self.d  
         
-        self.hole_position = np.array([0.0, -0.7, 0.12])
+        self.hole_position = self.vac_cfg['hole_position'].copy()
         
         self.Dc = self.Kc * self.d
 
@@ -642,6 +649,69 @@ class MujocoSimulator:
         self.robot_state = None
         self.ik_solver = None
         self.previous_q = None
+
+        # Wrench preprocessing (bias compensation + low-pass + median)
+        self.wrench_filter = None
+        self.wrench_cutoff_hz = 15.0
+        self.wrench_filter_order = 3
+        self.wrench_use_median = True
+        self.wrench_median_window = 5
+        self.wrench_median_buffer = deque(maxlen=self.wrench_median_window)
+        self.wrench_bias = np.zeros(6, dtype=np.float64)
+        self.wrench_bias_steps = int(self.vac_cfg.get('wrench_bias_steps', 500))
+        self.wrench_bias_count = 0
+        self.use_wrench_bias_prior = bool(self.vac_cfg.get('use_wrench_bias_prior', True))
+        self.wrench_bias_prior = np.asarray(
+            self.vac_cfg.get('wrench_bias_prior', np.zeros(6, dtype=np.float64)),
+            dtype=np.float64,
+        ).reshape(6)
+        self.wrench_preprocessed = np.zeros(6, dtype=np.float64)
+
+    def _read_wrench_from_model_sensors(self):
+        """Read 6D wrench [fx, fy, fz, mx, my, mz] from MuJoCo sensors."""
+        def read_sensor_vec(sensor_name, expected_dim=3):
+            sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, sensor_name)
+            if sensor_id < 0:
+                raise ValueError(f"Sensor not found: {sensor_name}")
+            adr = self.model.sensor_adr[sensor_id]
+            dim = self.model.sensor_dim[sensor_id]
+            vec = np.copy(self.data.sensordata[adr:adr + dim]).reshape(-1)
+            if vec.shape[0] >= expected_dim:
+                return vec[:expected_dim]
+            return np.pad(vec, (0, expected_dim - vec.shape[0]))
+
+        try:
+            force = read_sensor_vec("jaka_force_sensor", expected_dim=3)
+            torque = read_sensor_vec("jaka_torque_sensor", expected_dim=3)
+        except Exception:
+            force = read_sensor_vec("jaka_force_sensor_fx", expected_dim=3)
+            torque = read_sensor_vec("jaka_torque_sensor_mx", expected_dim=3)
+
+        return np.concatenate([force, torque])
+
+    def _preprocess_wrench_1khz(self):
+        raw_wrench = self._read_wrench_from_model_sensors()
+        raw_wrench = np.nan_to_num(raw_wrench, nan=0.0, posinf=0.0, neginf=0.0)
+
+        self.wrench_bias_count += 1
+        if self.wrench_bias_count <= self.wrench_bias_steps:
+            alpha = 1.0 / float(self.wrench_bias_count)
+            self.wrench_bias = (1.0 - alpha) * self.wrench_bias + alpha * raw_wrench
+
+        bias_removed = raw_wrench - self.wrench_bias
+
+        if self.wrench_filter is not None:
+            filtered = self.wrench_filter(bias_removed.reshape(1, -1))[0]
+        else:
+            filtered = bias_removed
+
+        if self.wrench_use_median:
+            self.wrench_median_buffer.append(filtered.copy())
+            if len(self.wrench_median_buffer) >= 3:
+                filtered = np.median(np.stack(self.wrench_median_buffer, axis=0), axis=0)
+
+        self.wrench_preprocessed = np.asarray(filtered, dtype=np.float64).reshape(6)
+        return self.wrench_preprocessed.copy()
 
 
     def policy_thread_worker(self):
@@ -904,6 +974,14 @@ class MujocoSimulator:
         
         return distance_to_hole, transition_factor
 
+    def _check_insertion_success(self):
+        """Insertion success: aligned in XY and close in Z to hole center."""
+        site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "jaka_end_effector")
+        ee_pos = self.data.site_xpos[site_id].copy()
+        xy_error = np.linalg.norm(ee_pos[:2] - self.hole_position[:2])
+        z_error = abs(ee_pos[2] - self.hole_position[2])
+        return (xy_error < self.success_xy_threshold) and (z_error < self.success_z_threshold)
+
     def update_admittance_dynamics(self, Fe, dt):
         """Update admittance dynamics using current impedance parameters"""
         if Fe.ndim > 1:
@@ -947,6 +1025,18 @@ class MujocoSimulator:
         self.model.opt.iterations = 300    
         self.model.opt.tolerance = 1e-6  
         # self.model.opt.solver = mujoco.mjtSolver.mjSOL_PGS  # PGS is faster than Newton
+
+        fs = 1.0 / self.model.opt.timestep
+        self.wrench_filter = ButterLowPass(self.wrench_cutoff_hz, fs, order=self.wrench_filter_order)
+        self.wrench_filter.reset_state()
+        self.wrench_median_buffer.clear()
+        if self.use_wrench_bias_prior:
+            self.wrench_bias[:] = self.wrench_bias_prior
+            self.wrench_bias_count = self.wrench_bias_steps
+        else:
+            self.wrench_bias[:] = 0.0
+            self.wrench_bias_count = 0
+        self.wrench_preprocessed[:] = 0.0
 
         self.robot_state = RobotState(self.model, self.data, "jaka_end_effector", "jaka")
         self.ik_solver = IKArm(solver_type='QP', tol=1e-5, ilimit=10000)
@@ -1001,7 +1091,7 @@ class MujocoSimulator:
             last_policy_snapshot_time = 0.0
             policy_snapshot_period = 0.04  # 25Hz for policy thread
             
-            while viewer.is_running() and self.current_time < self.duration:
+            while viewer.is_running() and self.current_time < self.duration and not self.insertion_success:
                 step_start = time.time()
 
                 if not self.paused:
@@ -1012,11 +1102,21 @@ class MujocoSimulator:
                     # Physics step (fast, non-blocking)
                     mujoco.mj_step(self.model, self.data)
                     viewer.sync()
+
+                    if self._check_insertion_success():
+                        self.insertion_success = True
+                        self.termination_reason = "success"
+                        self.get_logger().info(
+                            f"Insertion success at t={self.current_time:.3f}s, stopping simulation early"
+                        )
+                        break
                     
                     # Update time
                     with self.time_lock:
                         self.current_time += self.model.opt.timestep
                         current_time_local = self.current_time
+
+                    self._preprocess_wrench_1khz()
                     
                     # Send robot state snapshot to policy thread (at 25Hz)
                     if current_time_local - last_policy_snapshot_time >= policy_snapshot_period:
@@ -1036,13 +1136,8 @@ class MujocoSimulator:
                             mujoco.mj_jacSite(self.model, self.data, jacp, jacr, site_id)
                             jacobian = np.vstack([jacp[:, :self.n], jacr[:, :self.n]])  # Shape: (6, n)
                             
-                            # Get force/torque sensor data
-                            if len(self.data.sensordata) >= 6:
-                                # Use the first 6 values as force/torque (fx, fy, fz, tx, ty, tz)
-                                force_torque = self.data.sensordata[:6].copy()
-                            else:
-                                # No sensor data available, use zeros
-                                force_torque = np.zeros(6)
+                            # Use preprocessed wrench (bias compensated and filtered)
+                            force_torque = self.wrench_preprocessed.copy()
                             
                             # Create snapshot
                             robot_state = RobotStateSnapshot(
@@ -1074,7 +1169,12 @@ class MujocoSimulator:
                 if sleep_time > 0:
                     time.sleep(sleep_time)
             
-        self.get_logger().info("Simulation finished")
+        if not self.insertion_success and self.current_time >= self.duration:
+            self.termination_reason = "time_limit"
+
+        self.get_logger().info(
+            f"Simulation finished (reason={self.termination_reason}, success={self.insertion_success})"
+        )
         self.simulation_running = False
         self.policy_running = False
         self.controller_running = False
@@ -1154,10 +1254,13 @@ def test_bc_policy():
             fallback_expert_data_path="data/expert_demonstration.pkl",
         )
         
+        cfg = get_vac_hyperparams()
+        hole_position = cfg['hole_position'].copy()
+
         test_cases = [
             (np.array([0.01, 0.02, -0.01]), np.array([0.0, -0.7, 0.35])),
             (np.array([0.05, -0.03, 0.02]), np.array([0.0, -0.7, 0.23])),
-            (np.array([0.001, 0.001, -0.001]), np.array([0.0, -0.7, 0.12])),
+            (np.array([0.001, 0.001, -0.001]), hole_position),
         ]
         
         for i, (error, desired_pos) in enumerate(test_cases):

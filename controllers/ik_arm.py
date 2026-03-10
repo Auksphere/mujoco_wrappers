@@ -435,6 +435,56 @@ class IKArm:
             self.solver = LM_Chan(λ=λ, ps=ps, λΣ=λΣ, tol=tol, ilimit=ilimit)
         else:
             raise ValueError("Invalid solver type")
+        # Cache one temp data object per model to avoid repeated MjData allocations.
+        self._temp_data_cache = {}
+        self._joint_limits_cache = {}
+        # DLS warm-start settings for snapshot IK (keeps API/outputs unchanged).
+        self._dls_damping = 1e-4
+        self._dls_max_step = 0.15
+
+    def _get_joint_limits(self, model: mujoco.MjModel):
+        """Cache joint limits per model to avoid repeated model.joint(i).range lookups."""
+        model_key = id(model)
+        limits = self._joint_limits_cache.get(model_key)
+        if limits is None:
+            low = np.zeros(model.nv, dtype=np.float64)
+            high = np.zeros(model.nv, dtype=np.float64)
+            for i in range(model.nv):
+                low[i] = float(model.joint(i).range[0])
+                high[i] = float(model.joint(i).range[1])
+            limits = (low, high)
+            self._joint_limits_cache[model_key] = limits
+        return limits
+
+    def _dls_warm_start(self, model: mujoco.MjModel, temp_data: mujoco.MjData, Tep: np.ndarray, q0: np.ndarray, jacobian: np.ndarray):
+        """Compute a fast DLS seed from snapshot jacobian to reduce solver iterations."""
+        if jacobian is None:
+            return q0.copy()
+
+        J = np.asarray(jacobian, dtype=np.float64)
+        if J.ndim != 2 or J.shape[0] < 6:
+            return q0.copy()
+
+        J = J[:6, :model.nv]
+        if J.shape[1] != model.nv:
+            return q0.copy()
+
+        Te = calculate_arm_Te(temp_data.body("attachment").xpos, temp_data.body("attachment").xquat)
+        e = angle_axis_python(Te, Tep).reshape(6)
+
+        # DLS: dq = J^T (J J^T + lambda^2 I)^-1 e
+        JT = J.T
+        A = J @ JT + self._dls_damping * np.eye(6)
+        try:
+            dq = JT @ np.linalg.solve(A, e)
+        except np.linalg.LinAlgError:
+            return q0.copy()
+
+        dq = np.clip(dq, -self._dls_max_step, self._dls_max_step)
+        q_seed = q0 + dq
+
+        low, high = self._get_joint_limits(model)
+        return np.clip(q_seed, low, high)
     
     def solve(self, model: mujoco.MjModel, data: mujoco.MjData, Tep: np.ndarray, q0: np.ndarray):
         self.q0 = np.zeros(model.nv)
@@ -466,13 +516,21 @@ class IKArm:
         start_time = time.time()
         
         try:
-            # Create a temporary data copy with the current joint state
-            temp_data = mujoco.MjData(model)
+            model_key = id(model)
+            temp_data = self._temp_data_cache.get(model_key)
+            if temp_data is None:
+                temp_data = mujoco.MjData(model)
+                self._temp_data_cache[model_key] = temp_data
+
+            # Reuse temp data and update joint state for this solve.
             temp_data.qpos[:len(q0)] = q0
-            mujoco.mj_forward(model, temp_data)
+            mujoco.mj_fwdPosition(model, temp_data)
+
+            # Use snapshot jacobian to warm-start with a cheap DLS step.
+            q_seed = self._dls_warm_start(model, temp_data, Tep, q0, jacobian)
             
             # Use the existing solver
-            result_IK = self.solver.solve(model, temp_data, Tep, q0)
+            result_IK = self.solver.solve(model, temp_data, Tep, q_seed)
             solve_time = time.time() - start_time
             
             if not result_IK[1]:

@@ -39,15 +39,15 @@ def plot_stiffness_comparison(expert_data, policy_data, save_path=None):
     
     # Plot expert trajectory
     plt.plot(expert_data['distance_to_hole'], expert_data['stiffness_norm'], 
-             'b-', linewidth=2, label='Expert', alpha=0.8)
+             'b-', linewidth=3, label='Expert', alpha=0.8)
     
     # Plot policy trajectory
     plt.plot(policy_data['distance_to_hole'], policy_data['stiffness_norm'], 
-             'r--', linewidth=2, label='Policy', alpha=0.8)
+             'r--', linewidth=3, label='Policy', alpha=0.8)
     
-    plt.xlabel('Distance to Hole', fontsize=14)
-    plt.ylabel('Stiffness Norm', fontsize=14)
-    plt.title('Distance to Hole vs Stiffness Norm Comparison', fontsize=16)
+    plt.xlabel('Distance to Hole', fontsize=24)
+    plt.ylabel('Stiffness Norm', fontsize=24)
+    plt.title('Distance to Hole vs Stiffness Norm Comparison', fontsize=24)
     plt.legend(fontsize=12)
     plt.grid(True, alpha=0.3)
     
@@ -72,15 +72,15 @@ def plot_damping_comparison(expert_data, policy_data, save_path=None):
     
     # Plot expert trajectory
     plt.plot(expert_data['distance_to_hole'], expert_data['damping_ratio'], 
-             'b-', linewidth=2, label='Expert', alpha=0.8)
+             'b-', linewidth=3, label='Expert', alpha=0.8)
     
     # Plot policy trajectory
     plt.plot(policy_data['distance_to_hole'], policy_data['damping_ratio'], 
-             'r--', linewidth=2, label='Policy', alpha=0.8)
+             'r--', linewidth=3, label='Policy', alpha=0.8)
     
-    plt.xlabel('Distance to Hole', fontsize=14)
-    plt.ylabel('Damping Ratio', fontsize=14)
-    plt.title('Distance to Hole vs Damping Ratio Comparison', fontsize=16)
+    plt.xlabel('Distance to Hole', fontsize=24)
+    plt.ylabel('Damping Ratio', fontsize=24)
+    plt.title('Distance to Hole vs Damping Ratio Comparison', fontsize=24)
     plt.legend(fontsize=12)
     plt.grid(True, alpha=0.3)
     
@@ -110,15 +110,15 @@ def plot_Kz_comparison(expert_data, policy_data, save_path=None):
 
     # Plot expert trajectory
     plt.plot(expert_data['distance_to_hole'], expert_data['K3'], 
-             'b-', linewidth=2, label='Expert', alpha=0.8)
+             'b-', linewidth=3, label='Expert', alpha=0.8)
     
     # Plot policy trajectory
     plt.plot(policy_data['distance_to_hole'], policy_data['K3'], 
-             'r--', linewidth=2, label='Policy', alpha=0.8)
+             'r--', linewidth=3, label='Policy', alpha=0.8)
     
-    plt.xlabel('Distance to Hole', fontsize=14)
-    plt.ylabel('Kz (position stiffness)', fontsize=14)
-    plt.title('Distance to Hole vs Kz Comparison', fontsize=16)
+    plt.xlabel('Distance to Hole', fontsize=24)
+    plt.ylabel('Kz (position stiffness)', fontsize=24)
+    plt.title('Distance to Hole vs Kz Comparison', fontsize=24)
     plt.legend(fontsize=12)
     plt.grid(True, alpha=0.3)
 

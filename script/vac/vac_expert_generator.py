@@ -58,6 +58,7 @@ import argparse
 import os
 import threading
 import queue
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -71,6 +72,7 @@ from scipy.spatial.transform import Slerp
 # Add project root to Python path to allow importing from 'controllers'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__))))
+from hyperparams import get_vac_hyperparams
 import importlib.util
 
 # First load util module
@@ -350,12 +352,17 @@ class MujocoSimulator:
         self.xml_file = 'models/jaka_zu12/jaka_pih_case0.xml'
         self.task = task
         self.trajectory_index = trajectory_index
+        self.vac_cfg = get_vac_hyperparams()
         
         # Generate unique PKL filename for each trajectory
         self.expert_pkl_name = f'expert_{task}_{trajectory_index+index_offset}.pkl'
         
 
-        self.duration = 5.0
+        self.duration = float(self.vac_cfg['duration_sec'])
+        self.success_xy_threshold = float(self.vac_cfg['success_xy_threshold'])
+        self.success_z_threshold = float(self.vac_cfg['success_z_threshold'])
+        self.insertion_success = False
+        self.termination_reason = "time_limit"
             
         # Frequency settings
         self.policy_frequency = 25.0  # Policy (IK computation): 25Hz
@@ -382,18 +389,18 @@ class MujocoSimulator:
         self.desired_q = np.array([0.0] * self.n)
 
         # Admittance control parameters (used in policy thread)
-        self.d_far = 0.1
-        self.d_near = 5.0
+        self.d_far = float(self.vac_cfg['d_far'])
+        self.d_near = float(self.vac_cfg['d_near'])
         self.d = self.d_far 
         
-        self.Mc = np.diag([200.0, 200.0, 200.0, 50, 50, 50])
+        self.Mc = self.vac_cfg['Mc'].copy()
         
         # Adaptive Kc parameters
-        self.Kc_far = np.diag([1000.0, 1000.0, 800.0, 1000.0, 1000.0, 1000.0])
-        self.Kc_near = np.diag([200.0, 200.0, 1500.0, 200.0, 200.0, 200.0])  
+        self.Kc_far = self.vac_cfg['Kc_far'].copy()
+        self.Kc_near = self.vac_cfg['Kc_near'].copy()
         self.Kc = self.Kc_far.copy()  
-        self.distance_threshold = 0.05  # 5cm threshold
-        self.hole_position = np.array([0.0, -0.7, 0.12])  
+        self.distance_threshold = float(self.vac_cfg['distance_threshold'])
+        self.hole_position = self.vac_cfg['hole_position'].copy()
         
         self.Dc = self.Kc * self.d
 
@@ -409,21 +416,87 @@ class MujocoSimulator:
             'force': [], 'admittance_displacement': [], 'joint_angles': [],
             'distance_to_hole': [], 'stiffness_norm': [], 'transition_factor': [],
             'damping_ratio': [],
+            'insertion_success': [],
             'K1': [], 'K2': [], 'K3': [], 'K4': [], 'K5': [], 'K6': []
         }
         
         self.latest_robot_state = None
 
-        self.pd_t, self.Rd_t, self.dpd_t, self.dRd_t, self.ddpd_t, self.ddRd_t = calculate_desired_pose_trajectory(self.task, self.duration)
-        # Use shared helper in misc_func for initial configuration
         from misc_func import get_initial_joint_config
-        self.initial_q = get_initial_joint_config(self.task, self.xml_file, IKArm, mode)
+        self.initial_q, initial_pose = get_initial_joint_config(self.task, self.xml_file, IKArm, mode)
+
+        self.pd_t, self.Rd_t, self.dpd_t, self.dRd_t, self.ddpd_t, self.ddRd_t = calculate_desired_pose_trajectory(self.task, self.duration, initial_config=initial_pose)
         
         self.model = None
         self.data = None
         self.robot_state = None
         self.ik_solver = None
         self.previous_q = None
+
+        # Wrench preprocessing (bias compensation + low-pass + median)
+        self.wrench_filter = None
+        self.wrench_cutoff_hz = 15.0
+        self.wrench_filter_order = 3
+        self.wrench_use_median = True
+        self.wrench_median_window = 5
+        self.wrench_median_buffer = deque(maxlen=self.wrench_median_window)
+        self.wrench_bias = np.zeros(6, dtype=np.float64)
+        self.wrench_bias_steps = int(self.vac_cfg.get('wrench_bias_steps', 500))
+        self.wrench_bias_count = 0
+        self.use_wrench_bias_prior = bool(self.vac_cfg.get('use_wrench_bias_prior', True))
+        self.wrench_bias_prior = np.asarray(
+            self.vac_cfg.get('wrench_bias_prior', np.zeros(6, dtype=np.float64)),
+            dtype=np.float64,
+        ).reshape(6)
+        self.wrench_preprocessed = np.zeros(6, dtype=np.float64)
+
+    def _read_wrench_from_model_sensors(self):
+        """Read 6D wrench [fx, fy, fz, mx, my, mz] from MuJoCo sensors."""
+        def read_sensor_vec(sensor_name, expected_dim=3):
+            sensor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, sensor_name)
+            if sensor_id < 0:
+                raise ValueError(f"Sensor not found: {sensor_name}")
+            adr = self.model.sensor_adr[sensor_id]
+            dim = self.model.sensor_dim[sensor_id]
+            vec = np.copy(self.data.sensordata[adr:adr + dim]).reshape(-1)
+            if vec.shape[0] >= expected_dim:
+                return vec[:expected_dim]
+            return np.pad(vec, (0, expected_dim - vec.shape[0]))
+
+        try:
+            # Preferred: legacy 3D vector sensors (single force + single torque)
+            force = read_sensor_vec("jaka_force_sensor", expected_dim=3)
+            torque = read_sensor_vec("jaka_torque_sensor", expected_dim=3)
+        except Exception:
+            # Fallback to named force/torque sensors.
+            force = read_sensor_vec("jaka_force_sensor_fx", expected_dim=3)
+            torque = read_sensor_vec("jaka_torque_sensor_mx", expected_dim=3)
+
+        return np.concatenate([force, torque])
+
+    def _preprocess_wrench_1khz(self):
+        raw_wrench = self._read_wrench_from_model_sensors()
+        raw_wrench = np.nan_to_num(raw_wrench, nan=0.0, posinf=0.0, neginf=0.0)
+
+        self.wrench_bias_count += 1
+        if self.wrench_bias_count <= self.wrench_bias_steps:
+            alpha = 1.0 / float(self.wrench_bias_count)
+            self.wrench_bias = (1.0 - alpha) * self.wrench_bias + alpha * raw_wrench
+
+        bias_removed = raw_wrench - self.wrench_bias
+
+        if self.wrench_filter is not None:
+            filtered = self.wrench_filter(bias_removed.reshape(1, -1))[0]
+        else:
+            filtered = bias_removed
+
+        if self.wrench_use_median:
+            self.wrench_median_buffer.append(filtered.copy())
+            if len(self.wrench_median_buffer) >= 3:
+                filtered = np.median(np.stack(self.wrench_median_buffer, axis=0), axis=0)
+
+        self.wrench_preprocessed = np.asarray(filtered, dtype=np.float64).reshape(6)
+        return self.wrench_preprocessed.copy()
 
     def policy_thread_worker(self):
         """Policy thread running at 25Hz - computes IK from Cartesian targets"""
@@ -483,9 +556,12 @@ class MujocoSimulator:
                         self.dx_admittance += self.ddx_admittance * 0.04  # dt = 0.04s for 25Hz
                         self.x_admittance += self.dx_admittance * 0.04
                         
-                        # Apply admittance to desired pose (only position for now)
-                        pd_modified = pd_current + self.x_admittance[:3]
-                        Rd_modified = Rd_current  # Keep original orientation for simplicity
+                        # Apply 6D admittance displacement to desired pose.
+                        pd_modified, Rd_modified = self.apply_admittance_to_desired_pose(
+                            pd_current,
+                            Rd_current,
+                            self.x_admittance,
+                        )
                         
                         # Create target transform
                         Tep = np.eye(4)
@@ -595,6 +671,7 @@ class MujocoSimulator:
                                     self.trajectory_data['stiffness_norm'].append(interpolated_data['stiffness_norm'])
                                     self.trajectory_data['transition_factor'].append(interpolated_data['transition_factor'])
                                     self.trajectory_data['damping_ratio'].append(interpolated_data['damping_ratio'])
+                                    self.trajectory_data['insertion_success'].append(bool(self.insertion_success))
 
                                     # Compute and record per-axis stiffness (K1-K6). If interpolated transition factor
                                     # is available, reconstruct K diag from near/far presets; otherwise use current Kc.
@@ -660,6 +737,14 @@ class MujocoSimulator:
         
         return distance_to_hole, transition_factor
 
+    def _check_insertion_success(self):
+        """Insertion success: aligned in XY and close in Z to hole center."""
+        site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "jaka_end_effector")
+        ee_pos = self.data.site_xpos[site_id].copy()
+        xy_error = np.linalg.norm(ee_pos[:2] - self.hole_position[:2])
+        z_error = abs(ee_pos[2] - self.hole_position[2])
+        return (xy_error < self.success_xy_threshold) and (z_error < self.success_z_threshold)
+
     def update_admittance_dynamics(self, Fe, dt):
         """Update admittance dynamics"""
         if Fe.ndim > 1:
@@ -702,6 +787,18 @@ class MujocoSimulator:
         self.model.opt.timestep = 0.001  
         self.model.opt.iterations = 300    
         self.model.opt.tolerance = 1e-6  
+
+        fs = 1.0 / self.model.opt.timestep
+        self.wrench_filter = ButterLowPass(self.wrench_cutoff_hz, fs, order=self.wrench_filter_order)
+        self.wrench_filter.reset_state()
+        self.wrench_median_buffer.clear()
+        if self.use_wrench_bias_prior:
+            self.wrench_bias[:] = self.wrench_bias_prior
+            self.wrench_bias_count = self.wrench_bias_steps
+        else:
+            self.wrench_bias[:] = 0.0
+            self.wrench_bias_count = 0
+        self.wrench_preprocessed[:] = 0.0
 
         self.robot_state = RobotState(self.model, self.data, "jaka_end_effector", "jaka")
         self.ik_solver = IKArm(solver_type='QP', tol=1e-5, ilimit=10000)
@@ -748,8 +845,9 @@ class MujocoSimulator:
         with mujoco.viewer.launch_passive(self.model, self.data, key_callback=self.key_callback) as viewer:
             last_policy_snapshot_time = 0.0
             policy_snapshot_period = 0.04
+            site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "jaka_end_effector")
             
-            while viewer.is_running() and self.current_time < self.duration:
+            while viewer.is_running() and self.current_time < self.duration and not self.insertion_success:
                 step_start = time.time()
 
                 if not self.paused:
@@ -759,11 +857,21 @@ class MujocoSimulator:
                     # Physics step (fast, non-blocking)
                     mujoco.mj_step(self.model, self.data)
                     viewer.sync()
+
+                    if self._check_insertion_success():
+                        self.insertion_success = True
+                        self.termination_reason = "success"
+                        self.get_logger().info(
+                            f"Insertion success at t={self.current_time:.3f}s, stopping simulation early"
+                        )
+                        break
                     
                     # Update time
                     with self.time_lock:
                         self.current_time += self.model.opt.timestep
                         current_time_local = self.current_time
+
+                    self._preprocess_wrench_1khz()
                     
                     # Send robot state snapshot to policy thread (at 25Hz)
                     if current_time_local - last_policy_snapshot_time >= policy_snapshot_period:
@@ -773,7 +881,6 @@ class MujocoSimulator:
                             mujoco.mj_forward(self.model, self.data)
                             
                             # Get end-effector pose
-                            site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "jaka_end_effector")
                             current_position = self.data.site_xpos[site_id].copy()
                             current_rotation = self.data.site_xmat[site_id].reshape(3, 3).copy()
                             
@@ -783,12 +890,8 @@ class MujocoSimulator:
                             mujoco.mj_jacSite(self.model, self.data, jacp, jacr, site_id)
                             jacobian = np.vstack([jacp[:, :self.n], jacr[:, :self.n]])  # Shape: (6, n)
                             
-                            # Get force/torque sensor data
-                            if len(self.data.sensordata) >= 6:
-                                force_torque = self.data.sensordata[:6].copy()
-                            else:
-                                # No sensor data available, use zeros
-                                force_torque = np.zeros(6)
+                            # Use preprocessed wrench (bias compensated and filtered)
+                            force_torque = self.wrench_preprocessed.copy()
                             
                             # Create snapshot
                             robot_state = RobotStateSnapshot(
@@ -819,7 +922,12 @@ class MujocoSimulator:
                 if sleep_time > 0:
                     time.sleep(sleep_time)
             
-        self.get_logger().info("Simulation finished, stopping threads...")
+        if not self.insertion_success and self.current_time >= self.duration:
+            self.termination_reason = "time_limit"
+
+        self.get_logger().info(
+            f"Simulation finished (reason={self.termination_reason}, success={self.insertion_success}), stopping threads..."
+        )
         self.simulation_running = False
         self.policy_running = False
         self.controller_running = False
@@ -989,6 +1097,9 @@ class MujocoSimulator:
                 'action_dim': 7,
                 'trajectory_length': len(observations),
                 'task': self.task,
+                'insertion_success': bool(self.insertion_success),
+                'termination_reason': self.termination_reason,
+                'max_attempt_time_sec': float(self.duration),
                 'observation_description': 'Variable Admittance Control: [e_t(3), pd_t(3), e_r(3), rd_t(3)] where e_t=p-pd, e_r=Log(R*Rd^T) (rotvec), rd_t=rotvec(Rd)',
                 'action_description': 'impedance_parameters: [K1, K2, K3, K4, K5, K6, damping_ratio]',
                 'error_convention': 'tracking_error: actual - desired (positive means overshoot)',
@@ -1040,8 +1151,9 @@ def main(args=None):
     parsed = parser.parse_args(args if args is not None else [])
 
     task = "pih"
+    # task = "regulation"
     
-    index_offset = 72
+    index_offset = 25
     mode = parsed.mode
     if mode == 'test':
         num_trajectories = 1

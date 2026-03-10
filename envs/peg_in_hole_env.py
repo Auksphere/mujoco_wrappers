@@ -6,6 +6,12 @@ from scipy.spatial.transform import Rotation as R
 import os
 import sys
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+from hyperparams import get_vac_hyperparams
+
 
 class PegInHoleEnv(gym.Env):
     """
@@ -27,6 +33,7 @@ class PegInHoleEnv(gym.Env):
         max_force: float = 50.0,
     ):
         super().__init__()
+        self.vac_cfg = get_vac_hyperparams()
 
         # Keep the relative XML path for later (e.g., reset-time IK sampling)
         self.xml_path = xml_path
@@ -42,19 +49,20 @@ class PegInHoleEnv(gym.Env):
         self.n_substeps = int(control_dt / physics_dt)
         self.max_episode_steps = max_episode_steps
         self.current_step = 0
+
+        self.success_xy_threshold = float(self.vac_cfg["success_xy_threshold"])
+        self.success_z_threshold = float(self.vac_cfg["success_z_threshold"])
         
         self.max_force = max_force
         
         self.ee_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "jaka_end_effector")
         self.peg_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "attachment")
         
+        self.hole_pos = self.vac_cfg["hole_position"].copy()
         try:
             self.hole_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "hole")
-            # Need to forward kinematics first to get world position
-            mujoco.mj_forward(self.model, self.data)
-            self.hole_pos = self.data.xpos[self.hole_body_id].copy()
-        except:
-            self.hole_pos = np.array([0.0, -0.7, 0.12])
+        except Exception:
+            self.hole_body_id = -1
 
         self.arm_joint_indices = np.arange(6)
         
@@ -67,11 +75,18 @@ class PegInHoleEnv(gym.Env):
             low=0.0, high=1.0, shape=(7,), dtype=np.float32
         )
     
-        self.k_range = [50.0, 1000.0]
-        self.damping_ratio_range = [0.1, 5.0]
+        kc_stack = np.concatenate([np.diag(self.vac_cfg["Kc_far"]), np.diag(self.vac_cfg["Kc_near"])])
+        self.k_range = [float(np.min(kc_stack)), float(np.max(kc_stack))]
+        self.damping_ratio_range = [
+            float(min(self.vac_cfg["d_far"], self.vac_cfg["d_near"])),
+            float(max(self.vac_cfg["d_far"], self.vac_cfg["d_near"])),
+        ]
 
-        self.trajectory_time = 0.0 
-        self.trajectory_duration = 3.0  
+        self.trajectory_time = 0.0
+        # Keep env trajectory feasible within one episode.
+        self.trajectory_duration = float(
+            min(self.vac_cfg["duration_sec"], self.max_episode_steps * self.control_dt)
+        )
         self.start_position = None  
         self.target_position = None 
         
@@ -117,7 +132,7 @@ class PegInHoleEnv(gym.Env):
             try:
                 return self.data.site_xpos[self.ee_site_id].copy()
             except Exception:
-                return self.hole_pos.copy() if hasattr(self, "hole_pos") else np.array([0.0, -0.7, 0.12])
+                return self.hole_pos.copy() if hasattr(self, "hole_pos") else self.vac_cfg["hole_position"].copy()
 
         t_norm = min(t / self.trajectory_duration, 1.0)
 
@@ -145,13 +160,19 @@ class PegInHoleEnv(gym.Env):
     
     def _check_success(self, obs):
         """Check if peg is successfully inserted into hole."""
-        tracking_error = obs[0:3] 
-        desired_position = obs[3:6] 
-        
-        target_distance = np.linalg.norm(desired_position - self.target_position)
-        tracking_error_norm = np.linalg.norm(tracking_error)
-        
-        return target_distance < 0.02 and tracking_error_norm < 0.01
+        return self._check_insertion_success(obs)
+
+    def _check_insertion_success(self, obs):
+        """Insertion success: aligned in XY and close in Z to hole center."""
+        tracking_error = obs[0:3]
+        desired_position = obs[3:6]
+        ee_position = tracking_error + desired_position
+
+        delta = ee_position - self.target_position
+        xy_error = np.linalg.norm(delta[:2])
+        z_error = abs(delta[2])
+
+        return xy_error < self.success_xy_threshold and z_error < self.success_z_threshold
     
     def _check_failure(self, obs):
         """Check if episode should terminate due to failure."""
@@ -180,7 +201,7 @@ class PegInHoleEnv(gym.Env):
         desired_position = obs_current[3:6]
 
         K = np.diag(k_params[:3])
-        M = np.diag([200.0, 200.0, 200.0])
+        M = self.vac_cfg["Mc"][:3, :3]
         D = damping_ratio * np.sqrt(K)
 
         ee_pos = self.data.site_xpos[self.ee_site_id].copy()
@@ -291,7 +312,11 @@ class PegInHoleEnv(gym.Env):
             spec_ik.loader.exec_module(ik_module)
             IKArm = ik_module.IKArm
 
-            q0 = get_initial_joint_config(task='pih', xml_file=xml_full_path, ik_class=IKArm, mode=None)
+            init_config = get_initial_joint_config(task='pih', xml_file=xml_full_path, ik_class=IKArm, mode=None)
+            if isinstance(init_config, tuple):
+                q0 = np.asarray(init_config[0], dtype=np.float64)
+            else:
+                q0 = np.asarray(init_config, dtype=np.float64)
             self.data.qpos[self.arm_joint_indices] = q0
         except Exception as e:
             # Fallback to the previous deterministic init if helper isn't available
@@ -299,12 +324,7 @@ class PegInHoleEnv(gym.Env):
             self.data.qpos[self.arm_joint_indices] = self.initial_qpos
 
         mujoco.mj_forward(self.model, self.data)
-        try:
-            self.hole_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base")
-            self.hole_pos = self.data.xpos[self.hole_body_id].copy()
-            self.hole_pos[2] =0.12
-        except:
-            self.hole_pos = np.array([0.0, -0.7, 0.12]) 
+        self.hole_pos = self.vac_cfg["hole_position"].copy()
         
         self.target_position = self.hole_pos.copy()
 
